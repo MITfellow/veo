@@ -201,7 +201,16 @@ export const entitiesProjector: Projector = {
       );
     } else if (e.type === 'entity.merged') {
       const p = e.payload as PayloadOf<'entity.merged'>;
-      storage.run('UPDATE entities SET merged_into = ?, updated_at = ? WHERE id = ?', [p.into, e.ts, p.from]);
+      // `from === into` means *unmerge* (decision 028).
+      //
+      // An entity merged into itself cannot mean anything else, and §22.2
+      // requires merges to be reversible. The alternative was a ninth
+      // memory event, which would have reopened the closed event set for a
+      // case the existing payload can already express unambiguously. The
+      // reason string on the event says which direction it was, so the
+      // audit trail reads correctly either way.
+      const into = p.from === p.into ? null : p.into;
+      storage.run('UPDATE entities SET merged_into = ?, updated_at = ? WHERE id = ?', [into, e.ts, p.from]);
     }
   },
 };

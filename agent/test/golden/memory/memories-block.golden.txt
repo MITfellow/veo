@@ -1,0 +1,20 @@
+memories block
+count: 6
+
+- your daughter is Noor, six years old  (they told you, 0.80, 1 source, last seen 2026-01-01)
+- you are allergic to peanuts  (they told you, 0.90, 1 source, last seen 2026-01-01)
+- you work at Anthropic  (they told you, 0.82, 1 source, last seen 2026-01-01)
+- your name is Ara  (they told you, 0.95, 1 source, last seen 2026-01-01)
+- you live in Berlin  (they told you, 0.60, 1 source, last seen 2026-01-01)  [DISPUTED: you have contradictory evidence. Do not assert this. Ask.]
+- you prefer morning meetings  (inferred, 0.42, 1 source, last seen 2026-01-01)  [treat as a guess; confirm before acting on it]
+
+open questions:
+  You have conflicting information about this: you live in Berlin. Ask, do not guess.
+
+identity card:
+  What you know about this person:
+  - your daughter is Noor, six years old
+  - your name is Ara
+  - you are allergic to peanuts
+  - you work at Anthropic
+  - you prefer morning meetings (inferred)

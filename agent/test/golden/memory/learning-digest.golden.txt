@@ -1,0 +1,9 @@
+From your last 4 conversations I noted:
+• your daughter is Noor, six years old (80% sure, asserted by user)
+• your name is Ara (95% sure, asserted by user)
+• you are allergic to peanuts (90% sure, asserted by user)
+• you work at Anthropic (82% sure, asserted by user)
+• you live in Berlin (60% sure, asserted by user)
+• you often ask for clock.now (50% sure, inferred)
+• you prefer morning meetings (42% sure, inferred)
+If any of that is wrong, tell me and I will correct it.

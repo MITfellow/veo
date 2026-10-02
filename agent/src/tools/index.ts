@@ -10,19 +10,24 @@
  * proves it.
  *
  * Deferred with their milestones rather than forgotten:
- *   memory.recall / memory.remember / memory.forget   — M6
- *   history.expand                                    — M5
  *   clock.schedule                                    — M8
  *   ask_user                                          — M4 (it suspends)
+ *
+ * The memory tools (M6) and history.expand (M5) are registered by the
+ * composition root instead, because both need a live store handed to them.
+ * They are no less built-in for it — a tool that needs a dependency cannot
+ * be a module-level constant without smuggling a global in behind it.
  */
 import type { ToolRegistry } from '../capability/registry.js';
 import type { Vault } from '../security/vault.js';
 import { clockNow } from './clock-now.js';
 import { notesRead, notesWrite } from './notes.js';
 import { makeVaultList } from './vault-list.js';
+import { memoryTools, type MemoryToolDeps } from './memory.js';
 
 export interface BuiltinDeps {
   vault?: Vault;
+  memory?: MemoryToolDeps;
 }
 
 export function registerBuiltins(registry: ToolRegistry, deps: BuiltinDeps = {}): ToolRegistry {
@@ -30,7 +35,10 @@ export function registerBuiltins(registry: ToolRegistry, deps: BuiltinDeps = {})
   registry.register(notesRead);
   registry.register(notesWrite);
   if (deps.vault !== undefined) registry.register(makeVaultList(deps.vault));
+  if (deps.memory !== undefined) {
+    for (const tool of memoryTools(deps.memory)) registry.register(tool);
+  }
   return registry;
 }
 
-export { clockNow, notesRead, notesWrite, makeVaultList };
+export { clockNow, notesRead, notesWrite, makeVaultList, memoryTools };

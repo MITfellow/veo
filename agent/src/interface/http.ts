@@ -33,6 +33,12 @@ export interface ApiDeps {
   /** Bearer token. §15: never a hardcoded user id — the token maps to one. */
   auth: { token: string; principal: string };
   degradation?: () => string;
+  /**
+   * Called with the user's text before the run starts (M6). The memory
+   * layer uses it to run asynchronous recall ahead of synchronous context
+   * assembly. Optional, and its rejection is swallowed by design.
+   */
+  beforeRun?: (principal: string, sessionId: string, text: string) => Promise<void>;
 }
 
 /** §29: `{ decision, scope }`. Validated like every other boundary. */
@@ -247,7 +253,14 @@ export class Api {
       // The run id has to be known *before* the run starts, or the client
       // cannot subscribe to a stream it is about to miss the start of.
       const runId = ids.ulid();
-      const started = runner.run({ sessionId, principal, trigger: 'user', runId });
+      // Memory gets first sight of the turn so recall can run its
+      // asynchronous path (embeddings) before the synchronous context
+      // assembly asks for it. Failure here is not fatal: recall degrades to
+      // the lexical fallback rather than the request failing.
+      const primed = this.deps.beforeRun?.(principal, sessionId, text) ?? Promise.resolve();
+      const started = primed
+        .catch(() => undefined)
+        .then(() => runner.run({ sessionId, principal, trigger: 'user', runId }));
       this.track(runId, started);
 
       json(res, 202, { runId, sessionId });

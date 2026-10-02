@@ -263,6 +263,52 @@ const MemoryForgotten = z.object({
   shredded: z.boolean(),
 });
 const MemoryCorrected = z.object({ factId: z.string(), was: Json, now: Json, by: z.string() });
+
+/**
+ * §9's event set does not name the procedural store's lifecycle, and §22.3
+ * requires one: a rule is "retired with an event". Four additions, argued in
+ * decision 027 rather than slipped in.
+ *
+ * `memory.rejected` is the one I would defend hardest. §22.5 gates writes
+ * aggressively — no source span, hypothetical framing, protected attributes,
+ * "don't remember this". A refusal that leaves no trace is indistinguishable
+ * from an extraction that never happened, so "why don't you know that?" has
+ * no answer and the gate cannot be audited for over-rejection.
+ */
+const MemoryRejected = z.object({
+  reason: z.string(),
+  predicate: z.string(),
+  /** Never the rejected value itself: refusing to store it and then logging
+      it verbatim would be theatre. */
+  subjectHint: z.string(),
+  episodeId: z.string().optional(),
+});
+const MemoryConsolidated = z.object({
+  episodes: z.number().int().nonnegative(),
+  factsWritten: z.number().int().nonnegative(),
+  factsDecayed: z.number().int().nonnegative(),
+  rulesRetired: z.number().int().nonnegative(),
+  identityTokens: z.number().int().nonnegative(),
+  digest: z.string(),
+});
+const EpisodeRecorded = z.object({
+  episodeId: z.string(),
+  outcome: z.enum(['satisfied', 'corrected', 'abandoned', 'unknown']),
+  actions: z.array(z.string()),
+});
+const RuleLearned = z.object({
+  ruleId: z.string(),
+  instruction: z.string(),
+  trigger: z.string(),
+  confidence: z.number().min(0).max(1),
+});
+const RuleApplied = z.object({ ruleId: z.string(), applied: z.number().int().nonnegative() });
+const RuleOverridden = z.object({
+  ruleId: z.string(),
+  overridden: z.number().int().nonnegative(),
+  status: z.enum(['active', 'probation', 'retired']),
+});
+const RuleRetired = z.object({ ruleId: z.string(), reason: z.string() });
 const MemoryDisputed = z.object({ factId: z.string(), against: z.string(), reason: z.string() });
 
 /**
@@ -396,6 +442,13 @@ export const EVENT_SCHEMAS = {
   'memory.forgotten': MemoryForgotten,
   'memory.corrected': MemoryCorrected,
   'memory.disputed': MemoryDisputed,
+  'memory.rejected': MemoryRejected,
+  'memory.consolidated': MemoryConsolidated,
+  'episode.recorded': EpisodeRecorded,
+  'rule.learned': RuleLearned,
+  'rule.applied': RuleApplied,
+  'rule.overridden': RuleOverridden,
+  'rule.retired': RuleRetired,
 
   'entity.upserted': EntityUpserted,
   'entity.merged': EntityMerged,

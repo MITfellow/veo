@@ -49,8 +49,9 @@ export const factsProjector: Projector = {
              valid_from, valid_to, recorded_at, superseded_at, superseded_by,
              basis, confidence, sources, derivation,
              observation_count, last_confirmed_at, last_used_at, use_count,
-             stability, sensitivity, status, pinned, trust, key_id, event_seq
-           ) VALUES (?,?,?,?,?, ?,?,?,NULL,NULL, ?,?,?,NULL, 1,?,NULL,0, ?,?,?,0,?,NULL,?)
+             stability, sensitivity, status, pinned, trust, key_id, event_seq,
+             principal
+           ) VALUES (?,?,?,?,?, ?,?,?,NULL,NULL, ?,?,?,NULL, 1,?,NULL,0, ?,?,?,0,?,NULL,?, ?)
            ON CONFLICT(id) DO NOTHING`,
           [
             rowId,
@@ -70,6 +71,7 @@ export const factsProjector: Projector = {
             p.status,
             e.trust,
             e.seq,
+            e.principal,
           ],
         );
         storage.run('INSERT INTO facts_fts (fact_id, row_id, text) VALUES (?,?,?)', [

@@ -5,6 +5,8 @@ import { SCHEMA_003 } from './schema/003-steps.js';
 import { SCHEMA_004 } from './schema/004-effects.js';
 import { SCHEMA_005 } from './schema/005-artifacts.js';
 import { SCHEMA_006 } from './schema/006-approvals.js';
+import { SCHEMA_007 } from './schema/007-memory.js';
+import { SCHEMA_008 } from './schema/008-fact-principal.js';
 
 /**
  * Schema migrations.
@@ -27,6 +29,8 @@ export const MIGRATIONS: readonly Migration[] = Object.freeze([
   { version: 4, name: 'effects', sql: SCHEMA_004 },
   { version: 5, name: 'artifacts-widen', sql: SCHEMA_005 },
   { version: 6, name: 'approvals', sql: SCHEMA_006 },
+  { version: 7, name: 'memory', sql: SCHEMA_007 },
+  { version: 8, name: 'fact-principal', sql: SCHEMA_008 },
 ]);
 
 export interface MigrationRow {

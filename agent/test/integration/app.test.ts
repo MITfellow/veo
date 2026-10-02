@@ -87,9 +87,9 @@ describe('the agent as it actually ships', () => {
     const read = await fetch(`${base}/sessions/${session.id}`, { headers: auth() });
     const body = (await read.json()) as { messages: Array<{ role: string; text: string; trust: string }> };
     expect(body.messages.map((m) => m.role)).toEqual(['user', 'agent']);
-    expect(body.messages[0].trust).toBe('USER');
+    expect(body.messages[0]?.trust).toBe('USER');
     // Agent output is DERIVED, never USER: it is downstream of the model.
-    expect(body.messages[1].trust).toBe('DERIVED');
+    expect(body.messages[1]?.trust).toBe('DERIVED');
   });
 
   it('says it has no model rather than inventing an answer', async () => {
@@ -100,7 +100,7 @@ describe('the agent as it actually ships', () => {
     await drain(runId);
     const read = await fetch(`${base}/sessions/${session.id}`, { headers: auth() });
     const body = (await read.json()) as { messages: Array<{ text: string }> };
-    expect(body.messages[1].text).toContain('without a language model');
+    expect(body.messages[1]?.text).toContain('without a language model');
   });
 
   it('really calls a tool — the registry is wired, not just constructed', async () => {
@@ -114,7 +114,7 @@ describe('the agent as it actually ships', () => {
     const read = await fetch(`${base}/sessions/${session.id}`, { headers: auth() });
     const body = (await read.json()) as { messages: Array<{ text: string }> };
     // The clock is the real clock, so the year is this one.
-    expect(body.messages[1].text).toMatch(/\d{4}-\d{2}-\d{2}/);
+    expect(body.messages[1]?.text).toMatch(/\d{4}-\d{2}-\d{2}/);
   });
 
   it('replays a finished run for a client that arrives late', async () => {
@@ -146,6 +146,6 @@ describe('the agent as it actually ships', () => {
 
     const read = await fetch(`${base}/sessions/${session.id}`, { headers: auth() });
     const body = (await read.json()) as { messages: Array<{ text: string }> };
-    expect(body.messages[0].text).toBe('remember this conversation');
+    expect(body.messages[0]?.text).toBe('remember this conversation');
   });
 });

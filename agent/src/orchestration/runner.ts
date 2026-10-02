@@ -127,6 +127,11 @@ const DEFAULT_SYSTEM =
   'You are a personal agent. You are careful, concrete and honest. ' +
   'When you do not know something, say so plainly rather than guessing.';
 
+/** What M6 hangs off the end of a run. */
+export interface RunObserver {
+  afterRun(outcome: RunOutcome, request: RunRequest): void | Promise<void>;
+}
+
 export interface RunnerDeps {
   events: EventLog;
   clock: Clock;
@@ -145,6 +150,11 @@ export interface RunnerDeps {
   approvals?: ApprovalStore;
   /** Where a run parks while it waits for a human (§19). */
   suspensions?: SuspensionStore;
+  /**
+   * Notified after every run, used by M6 to learn from the episode. Errors
+   * here are logged and dropped — memory is not allowed to break answering.
+   */
+  observer?: RunObserver;
   /**
    * Turn the untrusted-content fence OFF. Adversarial testing only (§33).
    * Production leaves it on; the point of the switch is to prove nothing
@@ -244,7 +254,7 @@ export class Runner {
 
     suspensions.markResumed(suspension.runId);
 
-    return this.run(
+    return this.execute(
       {
         sessionId: suspension.sessionId,
         principal: suspension.principal,
@@ -268,7 +278,28 @@ export class Runner {
     );
   }
 
+  /**
+   * Run, then tell the observer about it.
+   *
+   * The memory write path hangs off this hook (§22.5: learning happens
+   * *after* the run, never on the user's critical path). The hook is
+   * deliberately fire-and-forget and swallowing: a failure to remember must
+   * never turn a successful answer into a failed one.
+   */
   async run(request: RunRequest, resume?: ResumeState): Promise<RunOutcome> {
+    const outcome = await this.execute(request, resume);
+    const observer = this.deps.observer;
+    if (observer !== undefined) {
+      void Promise.resolve()
+        .then(() => observer.afterRun(outcome, request))
+        .catch((error: unknown) => {
+          this.deps.logger.warn('memory observation failed', { error: String(error) });
+        });
+    }
+    return outcome;
+  }
+
+  private async execute(request: RunRequest, resume?: ResumeState): Promise<RunOutcome> {
     const { events, clock, ids, logger, model } = this.deps;
     const limits: RunLimits = { ...DEFAULT_LIMITS, ...request.limits };
 

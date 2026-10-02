@@ -29,6 +29,8 @@ import { ApprovalStore, SuspensionStore } from './capability/approvals.js';
 import { DailyLedger, DEFAULT_DAILY_BUDGET } from './capability/budgets.js';
 import { Compactor } from './cognition/compaction.js';
 import { Snapshotter } from './orchestration/snapshot.js';
+import { MemoryService } from './cognition/memory/service.js';
+import { HashEmbedder } from './providers/fake-embedder.js';
 import { Runner } from './orchestration/runner.js';
 import { Api } from './interface/http.js';
 import { OfflineProvider } from './providers/offline.js';
@@ -80,8 +82,22 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
   const suspensions = new SuspensionStore(storage, events, clock);
   const compactor = new Compactor({ events, clock, ids });
 
+  /* ── L4: memory (M6) ───────────────────────────────────────────────────── */
+  // The hash embedder ships rather than being test-only: with no API key the
+  // agent still gets hashed-semantic recall on top of lexical, which is a
+  // long way better than an empty memories block.
+  const memory = new MemoryService({
+    storage,
+    events,
+    clock,
+    ids,
+    principal: PRINCIPAL,
+    embedder: new HashEmbedder(),
+    logger,
+  });
+
   const registry = new ToolRegistry();
-  registerBuiltins(registry);
+  registerBuiltins(registry, { memory: memory.toolDeps() });
   registry.register(
     makeHistoryExpand(compactor, (runId) => {
       const row = storage.get<{ session_id: string }>(
@@ -112,6 +128,7 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
     events,
     clock,
     compactor,
+    memory: memory.source,
     // Block 13 of the context is the tool list, filtered by trust. The
     // registry is the only place tool names exist (invariant 9), so the
     // snapshot reads them from it rather than keeping a second list that
@@ -138,6 +155,7 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
     suspensions,
     snapshotter,
     compactor,
+    observer: memory,
     dailyLedger: new DailyLedger(events, clock),
     dailyBudget: DEFAULT_DAILY_BUDGET,
   });
@@ -154,6 +172,9 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
     approvals,
     redactor,
     auth: { token, principal: PRINCIPAL },
+    // Warms the recall cache with the user's own words before the run
+    // assembles its context; see StoredMemorySource.
+    beforeRun: (principal, sessionId, text) => memory.prime(principal, sessionId, text),
   });
 
   const server = api.server();
