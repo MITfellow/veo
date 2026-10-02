@@ -136,6 +136,7 @@ describe('the built-in set', () => {
       'notes.write',
       'time.convert',
       'time.until',
+      'unit.convert',
     ]);
   });
 

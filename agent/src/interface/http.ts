@@ -29,6 +29,7 @@ import type { Schedule, ScheduleStore } from '../orchestration/schedule.js';
 import { ScheduleParseError } from '../orchestration/schedule.js';
 import { IDENTITY_CARD_MAX_TOKENS } from '../cognition/context/types.js';
 import type { CalendarEvent, CalendarStore } from '../cognition/calendar/store.js';
+import type { Task, TaskStore } from '../cognition/tasks/store.js';
 import { PersonaSchema, type PersonaStore } from '../cognition/persona/store.js';
 import { traceOf, renderTrace } from '../observability/trace.js';
 import { computeMetrics } from '../observability/metrics.js';
@@ -98,6 +99,8 @@ export interface ApiDeps {
   persona?: PersonaStore;
   /** S1's calendar. Omitted → the calendar routes 404. */
   calendar?: CalendarStore;
+  /** S2's task list, on the same terms. */
+  tasks?: TaskStore;
   /**
    * §13's vault and keyring (M9). Omitted → the vault routes 404, which is
    * the honest answer for a build that has no secret storage wired.
@@ -209,6 +212,28 @@ const CreateEventBody = z.object({
   location: z.string().max(200).nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
 });
+
+const CreateTaskBody = z.object({
+  title: z.string().min(1).max(200),
+  dueAt: z.number().int().nullable().optional(),
+  note: z.string().max(2000).nullable().optional(),
+});
+
+const PatchTaskBody = z.object({ done: z.boolean() });
+
+/** The wire shape of a task. */
+function taskView(task: Task) {
+  return {
+    id: task.id,
+    title: task.title,
+    note: task.note,
+    dueAt: task.dueAt,
+    createdAt: task.createdAt,
+    completedAt: task.completedAt,
+    droppedAt: task.droppedAt,
+    done: task.completedAt !== null,
+  };
+}
 
 /** The wire shape of a calendar event — camelCase, no principal. */
 function eventView(event: CalendarEvent) {
@@ -1215,6 +1240,71 @@ export class Api {
         cancelled ? 200 : 404,
         cancelled ? { cancelled: params.id } : { error: 'no_such_event' },
       );
+    });
+
+    /* ──────────────────────── S2 — the task list ────────────────────── */
+
+    const tasks = this.deps.tasks;
+
+    this.add('GET', '/tasks', ({ res, url, principal }) => {
+      if (tasks === undefined) return json(res, 404, { error: 'no_tasks' });
+      const includeClosed = url.searchParams.get('includeClosed') === 'true';
+      json(res, 200, { tasks: tasks.list(principal, { includeClosed }).map(taskView) });
+    });
+
+    this.add('POST', '/tasks', async ({ res, body, principal }) => {
+      if (tasks === undefined) return json(res, 404, { error: 'no_tasks' });
+      const parsed = CreateTaskBody.safeParse(await body());
+      if (!parsed.success) {
+        return json(res, 400, { error: 'invalid_task', detail: parsed.error.issues });
+      }
+      try {
+        json(
+          res,
+          201,
+          taskView(
+            tasks.add(principal, {
+              title: parsed.data.title,
+              ...(parsed.data.dueAt === undefined ? {} : { dueAt: parsed.data.dueAt }),
+              ...(parsed.data.note === undefined ? {} : { note: parsed.data.note }),
+            }),
+          ),
+        );
+      } catch (error) {
+        json(res, 400, {
+          error: 'invalid_task',
+          detail: error instanceof Error ? error.message : 'the task could not be added',
+        });
+      }
+    });
+
+    // Completing is a PATCH rather than its own verb because it is a
+    // state change on the task, and un-completing has to be possible:
+    // a tick-box you cannot untick is a trap.
+    this.add('PATCH', '/tasks/:id', async ({ res, params, body, principal }) => {
+      if (tasks === undefined) return json(res, 404, { error: 'no_tasks' });
+      const parsed = PatchTaskBody.safeParse(await body());
+      if (!parsed.success) {
+        return json(res, 400, { error: 'invalid_patch', detail: parsed.error.issues });
+      }
+      const id = params.id ?? '';
+      if (!parsed.data.done) {
+        // Un-ticking is the one operation the event log cannot express
+        // as a new fact without a `task.reopened` event, which S2 does
+        // not have. Reported honestly rather than silently ignored.
+        return json(res, 409, {
+          error: 'not_reopenable',
+          detail: 'A completed task cannot be reopened yet. Add it again instead.',
+        });
+      }
+      const done = tasks.complete(principal, id);
+      json(res, done ? 200 : 404, done ? { id, done: true } : { error: 'no_such_task' });
+    });
+
+    this.add('DELETE', '/tasks/:id', ({ res, params, principal }) => {
+      if (tasks === undefined) return json(res, 404, { error: 'no_tasks' });
+      const dropped = tasks.drop(principal, params.id ?? '');
+      json(res, dropped ? 200 : 404, dropped ? { dropped: params.id } : { error: 'no_such_task' });
     });
 
     /* ────────────────── §28 — schedules, jobs, degradation ────────────── */

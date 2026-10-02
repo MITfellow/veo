@@ -25,6 +25,9 @@ import { mathEval } from './math-eval.js';
 import { timeConvert, timeUntil } from './time.js';
 import { notesRead, notesWrite, notesList, notesSearch } from './notes.js';
 import { calendarTools, type CalendarToolDeps } from './calendar.js';
+import { taskTools, type TaskToolDeps } from './tasks.js';
+import { unitConvert } from './unit-convert.js';
+import { makeConversationSearch, type SearchToolDeps } from './conversation-search.js';
 import { makeVaultList } from './vault-list.js';
 import { memoryTools, type MemoryToolDeps } from './memory.js';
 
@@ -33,6 +36,9 @@ export interface BuiltinDeps {
   memory?: MemoryToolDeps;
   /** S1's calendar. Omitted → the calendar tools simply are not offered. */
   calendar?: CalendarToolDeps;
+  /** S2's task list and conversation search, on the same terms. */
+  tasks?: TaskToolDeps;
+  conversations?: SearchToolDeps;
 }
 
 export function registerBuiltins(registry: ToolRegistry, deps: BuiltinDeps = {}): ToolRegistry {
@@ -40,12 +46,19 @@ export function registerBuiltins(registry: ToolRegistry, deps: BuiltinDeps = {})
   registry.register(mathEval);
   registry.register(timeConvert);
   registry.register(timeUntil);
+  registry.register(unitConvert);
   registry.register(notesRead);
   registry.register(notesWrite);
   registry.register(notesList);
   registry.register(notesSearch);
   if (deps.calendar !== undefined) {
     for (const tool of calendarTools(deps.calendar)) registry.register(tool);
+  }
+  if (deps.tasks !== undefined) {
+    for (const tool of taskTools(deps.tasks)) registry.register(tool);
+  }
+  if (deps.conversations !== undefined) {
+    registry.register(makeConversationSearch(deps.conversations));
   }
   if (deps.vault !== undefined) registry.register(makeVaultList(deps.vault));
   if (deps.memory !== undefined) {
@@ -64,6 +77,9 @@ export {
   notesList,
   notesSearch,
   calendarTools,
+  taskTools,
+  unitConvert,
+  makeConversationSearch,
   makeVaultList,
   memoryTools,
 };

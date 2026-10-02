@@ -182,6 +182,7 @@ describe('invariant 9: no tool name outside src/tools/', () => {
       'notes.write',
       'time.convert',
       'time.until',
+      'unit.convert',
     ]);
 
     const withVault = new ToolRegistry();

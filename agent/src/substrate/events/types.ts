@@ -452,6 +452,22 @@ const CalendarAdded = z.object({
 });
 const CalendarCancelled = z.object({ eventId: z.string() });
 
+/**
+ * S2's tasks. `completed` and `dropped` are separate event types rather
+ * than one `task.closed` with a reason field, because they are
+ * different facts about the world and the log is the place that
+ * distinction has to survive: "I did it" and "this stopped being worth
+ * doing" answer different questions about an old list.
+ */
+const TaskAdded = z.object({
+  taskId: z.string(),
+  title: z.string(),
+  note: z.string().nullable(),
+  dueAt: z.number().int().nullable(),
+});
+const TaskCompleted = z.object({ taskId: z.string() });
+const TaskDropped = z.object({ taskId: z.string() });
+
 const ScheduleCreated = z.object({
   scheduleId: z.string(),
   name: z.string(),
@@ -685,6 +701,9 @@ export const EVENT_SCHEMAS = {
   'schedule.missed': ScheduleMissed,
   'calendar.added': CalendarAdded,
   'calendar.cancelled': CalendarCancelled,
+  'task.added': TaskAdded,
+  'task.completed': TaskCompleted,
+  'task.dropped': TaskDropped,
 
   'schedule.created': ScheduleCreated,
   'schedule.updated': ScheduleUpdated,

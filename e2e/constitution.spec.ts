@@ -71,7 +71,10 @@ test('an article you write outranks the agent’s own, visibly', async ({ page, 
 
   const input = page.getByLabel('New article');
   await input.fill('Never answer with bullet points.');
-  await page.getByRole('button', { name: 'Add', exact: true }).dispatchEvent('click');
+  // Scoped to this panel's own form. The Settings sheet is one long
+  // column and S2's to-do list added a second "Add" button to it —
+  // an unscoped role locator was only ever right by accident.
+  await page.locator('.con-add').getByRole('button', { name: 'Add', exact: true }).dispatchEvent('click');
 
   const mine = page.locator('.con-row').filter({ hasText: 'Never answer with bullet points.' });
   await expect(mine).toHaveCount(1);

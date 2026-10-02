@@ -84,21 +84,40 @@ export const sessionsProjector: Projector = {
 
 export const messagesProjector: Projector = {
   name: 'messages',
-  version: 1,
+  // Bumped at S2: this projector now also maintains `messages_fts`.
+  // Without the bump an existing database would keep its messages and
+  // have an empty index, and search would return nothing with no error
+  // anywhere — the worst kind of broken.
+  version: 2,
   handles: ['message.user', 'message.agent', 'message.system'],
   reset(storage) {
     storage.exec('DELETE FROM messages');
+    // Owned by this projector, so cleared by it. If the index were
+    // maintained by a SQLite trigger instead, this line would be the
+    // bug: the trigger would fire again during the replay and every
+    // message would be indexed twice.
+    storage.exec('DELETE FROM messages_fts');
   },
   apply(e, storage) {
     if (e.sessionId === null) return;
     const role = e.type.slice('message.'.length);
     const text = (e.payload as { text: string }).text;
-    storage.run(
+    const result = storage.run(
       `INSERT INTO messages (id, seq, session_id, run_id, role, text, ts, trust)
        VALUES (?,?,?,?,?,?,?,?)
        ON CONFLICT(id) DO NOTHING`,
       [e.id, e.seq, e.sessionId, e.runId, role, text, e.ts, e.trust],
     );
+    // Only when the row was actually new. `ON CONFLICT DO NOTHING` makes
+    // the insert above idempotent; the index has no primary key to make
+    // the same promise, so it has to follow the row.
+    if (result.changes > 0) {
+      storage.run('INSERT INTO messages_fts (row_id, session_id, text) VALUES (?,?,?)', [
+        e.id,
+        e.sessionId,
+        text,
+      ]);
+    }
   },
 };
 

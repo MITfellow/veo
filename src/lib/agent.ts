@@ -135,6 +135,18 @@ export interface CalibrationView {
 
 export type CatchUp = 'fire-all' | 'fire-once' | 'skip';
 
+/** S2's task list — things with no time attached. */
+export interface TaskView {
+  id: string;
+  title: string;
+  note: string | null;
+  dueAt: number | null;
+  createdAt: number;
+  completedAt: number | null;
+  droppedAt: number | null;
+  done: boolean;
+}
+
 /** S1's calendar. The agent's own — there is no connector behind it. */
 export interface CalendarEventView {
   id: string;
@@ -591,6 +603,28 @@ export const agent = {
 
   async cancelCalendarEvent(id: string): Promise<void> {
     await call(`/calendar/${id}`, { method: 'DELETE' });
+  },
+
+  /* ─────────────────────────── S2: the task list ───────────────────────── */
+
+  async tasks(includeClosed = false): Promise<{ tasks: TaskView[] }> {
+    return call(`/tasks${includeClosed ? '?includeClosed=true' : ''}`);
+  },
+
+  async addTask(input: {
+    title: string;
+    dueAt?: number | null;
+    note?: string | null;
+  }): Promise<TaskView> {
+    return call('/tasks', { method: 'POST', body: JSON.stringify(input) });
+  },
+
+  async completeTask(id: string): Promise<void> {
+    await call(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify({ done: true }) });
+  },
+
+  async dropTask(id: string): Promise<void> {
+    await call(`/tasks/${id}`, { method: 'DELETE' });
   },
 
   /* ─────────────────── §28: schedules, jobs, degradation ───────────────── */

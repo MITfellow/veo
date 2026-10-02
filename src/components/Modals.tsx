@@ -4,6 +4,7 @@ import StoragePanel from './StoragePanel';
 import MemoryPanel from './MemoryPanel';
 import ConstitutionPanel from './ConstitutionPanel';
 import CalendarPanel from './CalendarPanel';
+import TasksPanel from './TasksPanel';
 import SchedulePanel from './SchedulePanel';
 import ProofPanel from './ProofPanel';
 import VaultPanel from './VaultPanel';
@@ -289,6 +290,8 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
           <ConstitutionPanel onNotice={setNotice} />
 
           <CalendarPanel onNotice={setNotice} />
+
+          <TasksPanel onNotice={setNotice} />
 
           <SchedulePanel onNotice={setNotice} />
 

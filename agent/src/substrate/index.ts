@@ -10,6 +10,7 @@ import { CORE_PROJECTORS } from './projections/core.js';
 import { factsProjector } from './projections/facts.js';
 import { personaProjector } from './projections/persona.js';
 import { calendarProjector } from './projections/calendar.js';
+import { tasksProjector } from './projections/tasks.js';
 import { schedulingProjector } from './projections/scheduling.js';
 import { constitutionProjector } from './projections/constitution.js';
 import { SqliteStorage } from './storage/sqlite.js';
@@ -55,6 +56,7 @@ export const ALL_PROJECTORS: readonly Projector[] = Object.freeze([
   schedulingProjector,
   personaProjector,
   calendarProjector,
+  tasksProjector,
 ]);
 
 export function createSubstrate(options: SubstrateOptions = {}): Substrate {

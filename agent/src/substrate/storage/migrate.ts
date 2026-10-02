@@ -13,6 +13,8 @@ import { SCHEMA_011 } from './schema/011-scheduling.js';
 import { SCHEMA_012 } from './schema/012-persona.js';
 import { SCHEMA_013 } from './schema/013-fact-subject-index.js';
 import { SCHEMA_014 } from './schema/014-calendar.js';
+import { SCHEMA_015 } from './schema/015-messages-fts.js';
+import { SCHEMA_016 } from './schema/016-tasks.js';
 
 /**
  * Schema migrations.
@@ -43,6 +45,8 @@ export const MIGRATIONS: readonly Migration[] = Object.freeze([
   { version: 12, name: 'persona', sql: SCHEMA_012 },
   { version: 13, name: 'fact-subject-index', sql: SCHEMA_013 },
   { version: 14, name: 'calendar', sql: SCHEMA_014 },
+  { version: 15, name: 'messages-fts', sql: SCHEMA_015 },
+  { version: 16, name: 'tasks', sql: SCHEMA_016 },
 ]);
 
 export interface MigrationRow {

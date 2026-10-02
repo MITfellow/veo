@@ -41,6 +41,8 @@ import { GovernedProvider } from './orchestration/governed-model.js';
 import { OfflineProvider } from './providers/offline.js';
 import { OpenAiCompatibleProvider } from './providers/openai-compatible.js';
 import { CalendarStore } from './cognition/calendar/store.js';
+import { TaskStore } from './cognition/tasks/store.js';
+import { MessageSearch } from './cognition/search/messages.js';
 import { PersonaStore } from './cognition/persona/store.js';
 import { JobQueue } from './orchestration/queue.js';
 import { ScheduleStore, SCHEDULED_RUN } from './orchestration/schedule.js';
@@ -175,9 +177,18 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
   // S1's calendar. Local by construction: an append to the same event
   // log, no sync and no third-party credential anywhere beneath it.
   const calendar = new CalendarStore({ storage, events, clock, ids });
+  // S2: the list with no times on it, and the agent's own view of
+  // everything that has ever been said to it.
+  const tasks = new TaskStore({ storage, events, clock, ids });
+  const conversations = new MessageSearch({ storage });
 
   const registry = new ToolRegistry();
-  registerBuiltins(registry, { memory: memory.toolDeps(), calendar: { store: calendar } });
+  registerBuiltins(registry, {
+    memory: memory.toolDeps(),
+    calendar: { store: calendar },
+    tasks: { store: tasks },
+    conversations: { search: conversations },
+  });
   registry.register(
     makeHistoryExpand(compactor, (runId) => {
       const row = storage.get<{ session_id: string }>(
@@ -368,6 +379,7 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
     // S1's calendar, on the same terms: a calendar the user cannot see
     // and edit directly is one they cannot trust the agent with.
     calendar,
+    tasks,
     askBudget,
     auditor,
     // §28 + §27.

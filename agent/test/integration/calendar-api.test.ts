@@ -233,7 +233,15 @@ describe('the S1 tools in the registry', () => {
       .filter((tool) => tool.minTrust === 'FOREIGN')
       .map((tool) => tool.name)
       .sort();
-    expect(foreign).toEqual(['clock.now', 'math.eval', 'time.convert', 'time.until']);
+    expect(foreign).toEqual([
+      'clock.now',
+      'math.eval',
+      'time.convert',
+      'time.until',
+      // Added at S2. Converting a figure out of a web page cannot hurt
+      // anyone, so it sits at the floor with the other pure ones.
+      'unit.convert',
+    ]);
 
     for (const name of ['calendar.add', 'calendar.cancel', 'notes.search', 'notes.list']) {
       expect(registry.get(name)!.minTrust, name).not.toBe('FOREIGN');

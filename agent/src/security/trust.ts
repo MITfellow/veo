@@ -41,6 +41,9 @@ export type Capability =
    */
   | 'calendar:read'
   | 'calendar:write'
+  /** S2's task list. Split for the same reason the calendar's is. */
+  | 'tasks:read'
+  | 'tasks:write'
   | 'approval:request';
 
 /**
@@ -68,6 +71,8 @@ const CAPABILITY_CEILING: Record<TrustLevel, ReadonlySet<Capability>> = {
     'schedule:create',
     'calendar:read',
     'calendar:write',
+    'tasks:read',
+    'tasks:write',
     'approval:request',
   ]),
   USER: new Set<Capability>([
@@ -86,6 +91,8 @@ const CAPABILITY_CEILING: Record<TrustLevel, ReadonlySet<Capability>> = {
     'schedule:create',
     'calendar:read',
     'calendar:write',
+    'tasks:read',
+    'tasks:write',
     'approval:request',
   ]),
   // Model output derived from SYSTEM/USER content only. Can act, but cannot
@@ -109,6 +116,11 @@ const CAPABILITY_CEILING: Record<TrustLevel, ReadonlySet<Capability>> = {
     // because removing it here would also stop the agent adding.
     'calendar:read',
     'calendar:write',
+    // Same split as the calendar: the agent may add a task and tick one
+    // off, both visible and reversible. `tasks.drop` is held back by
+    // its own minTrust rather than by removing the capability.
+    'tasks:read',
+    'tasks:write',
     // **No `schedule:create`.** Found by an M8 adversarial test and changed
     // here rather than papered over downstream: a schedule is a standing
     // grant of future authority, and DERIVED is model output, which is
@@ -131,6 +143,7 @@ const CAPABILITY_CEILING: Record<TrustLevel, ReadonlySet<Capability>> = {
     // arrives mislabelled, and a mislabelled calendar write is an entry
     // in someone's week that nobody remembers making.
     'calendar:read',
+    'tasks:read',
     'approval:request',
   ]),
   // §12.2 verbatim: no vault reads, no money, no outbound messages, no
