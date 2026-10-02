@@ -1,7 +1,7 @@
 scenario: scheduled-run
 window: 4000
-policy: ctx-1/tpl-3
-digest: 47010df874a3ec5b
+policy: ctx-1/tpl-4
+digest: 97e03c835f8c8098
 total_tokens: 1058
 truncated: false
 

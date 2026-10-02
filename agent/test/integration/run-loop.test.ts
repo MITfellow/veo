@@ -73,6 +73,9 @@ describe('the run loop', () => {
       'step.started',
       // M5: every turn logs the context it was given (§21).
       'context.assembled',
+      // M9: and how long assembling it took (§32's budget is measured,
+      // not assumed).
+      'perf.sampled',
       'model.requested',
       'model.responded',
       'step.finished',

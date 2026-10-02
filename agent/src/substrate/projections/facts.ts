@@ -29,7 +29,20 @@ interface FactRowId {
 export const factsProjector: Projector = {
   name: 'facts',
   version: 1,
-  handles: ['memory.written', 'memory.updated', 'memory.superseded', 'memory.corrected', 'memory.forgotten', 'memory.disputed'],
+  handles: [
+    'memory.written',
+    'memory.updated',
+    'memory.superseded',
+    'memory.corrected',
+    'memory.forgotten',
+    'memory.disputed',
+    // M9: usage counters are derived state like everything else here.
+    // They used to be written straight to the table by `markUsed()`,
+    // which meant a rebuild silently reset them — a real invariant-1
+    // leak, found by running `POST /backup/verify` against a database
+    // that had actually been used.
+    'memory.used',
+  ],
 
   reset(storage: Storage) {
     storage.exec('DELETE FROM facts');
@@ -133,6 +146,18 @@ export const factsProjector: Projector = {
            WHERE fact_id = ? AND superseded_at IS NULL AND valid_to IS NULL`,
           [p.supersededBy, p.validTo, p.factId],
         );
+        break;
+      }
+
+      case 'memory.used': {
+        const p = e.payload as PayloadOf<'memory.used'>;
+        for (const factId of p.factIds) {
+          storage.run(
+            `UPDATE facts SET last_used_at = ?, use_count = use_count + 1
+             WHERE fact_id = ? AND superseded_at IS NULL`,
+            [e.ts, factId],
+          );
+        }
         break;
       }
 

@@ -49,11 +49,19 @@ export const DEFAULT_KERNEL = [
 
 export const KERNEL: Template = {
   name: 'kernel',
-  version: 'kernel-1',
+  version: 'kernel-2',
   kind: 'system',
   render(snapshot) {
     const text = snapshot.kernel.trim() === '' ? DEFAULT_KERNEL : snapshot.kernel.trim();
-    return [{ id: 'kernel', text }];
+    const persona = snapshot.persona ?? [];
+    if (persona.length === 0) return [{ id: 'kernel', text }];
+    // A separate item, so eviction accounting still sees two things, but in
+    // the same unevictable block: the user's chosen voice is not a nicety
+    // the assembler may drop when the window gets tight.
+    return [
+      { id: 'kernel', text },
+      { id: 'kernel:persona', text: ['', 'How you sound (set by the person):', ...persona].join('\n') },
+    ];
   },
 };
 

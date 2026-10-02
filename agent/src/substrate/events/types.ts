@@ -353,6 +353,13 @@ const ContextAssembled = z.object({
   ),
   drops: z.array(z.object({ block: z.string(), dropped: z.number().int(), reason: z.string() })),
   policyVersion: z.string(),
+  /**
+   * The window this was assembled against (M9). Added so context
+   * utilization is a fact rather than something inferred from a version
+   * string; defaults to 0 for events written before it existed, which
+   * read as "unknown" rather than as "0% used".
+   */
+  window: z.number().int().nonnegative().default(0),
 });
 
 const ArtifactCreated = z.object({
@@ -394,6 +401,39 @@ const JobFailed = z.object({
   retryAt: z.number().int().nullable(),
 });
 const JobDeadLettered = z.object({ jobId: z.string(), attempts: z.number().int().positive(), error: z.string() });
+
+/**
+ * §32's budgets, measured rather than assumed (M9).
+ *
+ * A timing is state: it is how the system behaved at an instant, and the
+ * only honest place for it is the same log as everything else. Sampled,
+ * not recorded for every call — see `PERF_SAMPLE_EVERY`.
+ */
+const PerfSampled = z.object({
+  stage: z.enum(['context.assembly', 'memory.recall', 'first.token', 'event.append']),
+  ms: z.number().nonnegative(),
+  detail: z.string().optional(),
+});
+
+/** A recalled fact that actually made it into the answer's context (M9). */
+const MemoryUsed = z.object({
+  factIds: z.array(z.string()),
+  offered: z.number().int().nonnegative(),
+});
+
+const PersonaUpdated = z.object({
+  persona: z.object({
+    agentName: z.string(),
+    addressUser: z.string(),
+    formality: z.enum(['plain', 'warm', 'formal']),
+    length: z.enum(['brief', 'normal', 'thorough']),
+    emoji: z.boolean(),
+    language: z.string(),
+    notes: z.string(),
+  }),
+  version: z.number().int().positive(),
+  changed: z.array(z.string()),
+});
 
 const ScheduleCreated = z.object({
   scheduleId: z.string(),
@@ -637,6 +677,10 @@ export const EVENT_SCHEMAS = {
   'job.deadlettered': JobDeadLettered,
 
   'degradation.changed': DegradationChanged,
+
+  'persona.updated': PersonaUpdated,
+  'perf.sampled': PerfSampled,
+  'memory.used': MemoryUsed,
 
   'calibration.probed': CalibrationProbed,
   'calibration.answered': CalibrationAnswered,

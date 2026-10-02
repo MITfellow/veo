@@ -53,6 +53,13 @@ export interface Storage {
   transaction<T>(fn: () => T): T;
   /** True while inside `transaction`. */
   inTransaction(): boolean;
+  /**
+   * A consistent copy of the whole database at `path`, safe to take while
+   * the agent is writing (§13.5). A plain file copy of a database with a
+   * hot WAL is the classic way to produce a backup that verifies in the
+   * lab and fails in the fire, so the port exposes the real thing.
+   */
+  backupTo(path: string): void;
   close(): void;
 }
 

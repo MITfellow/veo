@@ -40,10 +40,12 @@ import { BiasAuditor } from './cognition/calibration/audit.js';
 import { GovernedProvider } from './orchestration/governed-model.js';
 import { OfflineProvider } from './providers/offline.js';
 import { OpenAiCompatibleProvider } from './providers/openai-compatible.js';
+import { PersonaStore } from './cognition/persona/store.js';
 import { JobQueue } from './orchestration/queue.js';
 import { ScheduleStore, SCHEDULED_RUN } from './orchestration/schedule.js';
 import { Worker } from './orchestration/worker.js';
 import { Degradation } from './orchestration/degradation.js';
+import { createSecurity } from './security/index.js';
 import { DiskFileStore } from './adapters/files.js';
 import { NodeNet } from './adapters/net.js';
 import type { ModelProvider } from './substrate/ports.js';
@@ -71,6 +73,20 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
   mkdirSync(dirname(db), { recursive: true });
   const substrate = createSubstrate({ dbPath: db });
   const { events, storage, clock, ids, hashing, logger, redactor } = substrate;
+
+  /* ── L2: security (§13) ────────────────────────────────────────────────
+   *
+   * Built before anything that could write a secret into an event. The
+   * vault registers every value it unwraps with the redactor the event log
+   * already uses *and* with the model-request firewall, so a secret that
+   * leaks into a payload is stripped at append time rather than discovered
+   * in a log file later.
+   *
+   * The keyring starts uninitialized and the agent runs fine that way —
+   * the vault is needed only by tools that use secrets. Setting a
+   * passphrase (Settings → Secrets, or POST /vault/unlock on a fresh
+   * install) is what brings it to life. */
+  const security = createSecurity(substrate);
 
   /* ── L4/L5: the model ──────────────────────────────────────────────────── */
   const apiKey = process.env.ARISH_API_KEY;
@@ -151,6 +167,10 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
     logger,
   });
 
+  // §29's persona (M9). Read by the snapshotter on every turn and written
+  // only by the user through PUT /persona.
+  const persona = new PersonaStore({ storage, events, clock });
+
   const registry = new ToolRegistry();
   registerBuiltins(registry, { memory: memory.toolDeps() });
   registry.register(
@@ -176,11 +196,16 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
     redactor,
     files: new DiskFileStore(resolve(dirname(db), 'files')),
     net: new NodeNet(),
+    // §13.2: tools receive `secret://name` references and the invoker
+    // resolves them inside the vault boundary, so the value never passes
+    // through tool code that might log it.
+    vault: security.vault,
   });
 
   /* ── L5: orchestration ─────────────────────────────────────────────────── */
   const snapshotter = new Snapshotter({
     events,
+    persona: (who) => persona.lines(who),
     clock,
     compactor,
     memory: memory.source,
@@ -215,6 +240,16 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
     snapshotter,
     compactor,
     observer: memory,
+    // §34.10's outbox, read back (M9). Committed effects only — an
+    // intended-but-unsettled effect is exactly the thing the agent must
+    // not claim to have done.
+    committedEffects: (runId: string) =>
+      storage
+        .all<{ tool: string; summary: string }>(
+          `SELECT tool, summary FROM effects WHERE run_id = ? AND state = 'committed'`,
+          [runId],
+        )
+        .map((row) => `${row.tool}: ${row.summary}`),
     dailyLedger: new DailyLedger(events, clock),
     dailyBudget: DEFAULT_DAILY_BUDGET,
   });
@@ -224,6 +259,11 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
   // a scheduled run is an ordinary run whose trigger happens to be
   // 'schedule'. The handler below is the whole of it.
   const ladder = new Degradation({ events, clock, principal: PRINCIPAL });
+  // §27's L4: a locked vault is a real reduction in what the agent can
+  // do, and the ladder is the place that is said out loud.
+  if (security.keyring.state() === 'locked') {
+    ladder.report('vault', 'the vault is locked; tools that need secrets will refuse');
+  }
   if (apiKey === undefined || apiKey === '') {
     // Honest from the first second: with no key the agent is on its
     // offline fallback, and §27 forbids being quietly dumber than
@@ -326,6 +366,11 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
     schedules,
     queue,
     ladder,
+    persona,
+    vault: security.vault,
+    keyring: security.keyring,
+    substrate,
+    dbPath: db,
     degradation: () => ladder.current(),
     onRunStart: () => {
       interactive += 1;

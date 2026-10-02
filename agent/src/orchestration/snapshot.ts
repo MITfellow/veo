@@ -85,6 +85,9 @@ export interface SnapshotterDeps {
    */
   constitutionDoc?: () => ConstitutionView;
   kernel?: () => string;
+  /** §29's persona, rendered (decision 036). A function: the user may edit
+   * their agent's voice between two turns of one session. */
+  persona?: (principal: string) => string[];
   timezone?: string;
   locale?: string;
   device?: string;
@@ -93,6 +96,13 @@ export interface SnapshotterDeps {
 export interface GatherInput {
   principal: string;
   sessionId: string;
+  /**
+   * Replay only (M9): ignore anything the session learned *after* this
+   * event seq. A run's own answer is in the log by the time anyone
+   * replays it, and including it would make every historical run look
+   * like its conversation block had grown.
+   */
+  asOfSeq?: number;
   trigger: string;
   triggerDetail?: string;
   degradation: 'L0' | 'L1' | 'L2' | 'L3';
@@ -143,13 +153,21 @@ export class Snapshotter {
 
     // Turns already folded into a summary are not repeated verbatim — that
     // would make compaction cost tokens instead of saving them.
-    const conversation = cache.turns.filter((turn) => (turn as Turn & { seq?: number }).seq === undefined || (turn as Turn & { seq?: number }).seq! > compactedThrough);
+    const seqOf = (turn: Turn): number | undefined => (turn as Turn & { seq?: number }).seq;
+    const conversation = cache.turns.filter((turn) => {
+      const seq = seqOf(turn);
+      if (seq === undefined) return true;
+      if (seq <= compactedThrough) return false;
+      // Replay's "as of": see GatherInput.asOfSeq.
+      return input.asOfSeq === undefined || seq < input.asOfSeq;
+    });
 
     const lastUserTurn = [...conversation].reverse().find((turn) => turn.role === 'user');
     const now = this.deps.clock.now();
 
     const snapshot: StateSnapshot = {
       kernel: this.deps.kernel?.() ?? '',
+      persona: this.deps.persona?.(input.principal) ?? [],
       constitution: this.deps.constitution?.() ?? '',
       constitutionDoc: this.deps.constitutionDoc?.() ?? null,
       identity: memory?.identity(input.principal) ?? null,

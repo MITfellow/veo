@@ -57,6 +57,9 @@ export interface Projector {
 export interface ReadQuery {
   fromSeq?: number;
   toSeq?: number;
+  /** Wall-clock window. Metrics ask by time; replay asks by seq. */
+  fromTs?: number;
+  toTs?: number;
   sessionId?: string;
   runId?: string;
   correlationId?: string;
@@ -226,6 +229,14 @@ export class EventLog {
     if (query.toSeq !== undefined) {
       where.push('seq <= ?');
       params.push(query.toSeq);
+    }
+    if (query.fromTs !== undefined) {
+      where.push('ts >= ?');
+      params.push(query.fromTs);
+    }
+    if (query.toTs !== undefined) {
+      where.push('ts <= ?');
+      params.push(query.toTs);
     }
     if (query.sessionId !== undefined) {
       where.push('session_id = ?');

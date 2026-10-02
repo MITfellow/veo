@@ -4013,3 +4013,163 @@
 .sch-btn.is-danger {
   color: var(--danger, #d7373f);
 }
+
+/* ───────────── §29/§30 — voice, proof and portability (M9) ─────────────
+ *
+ * Its own prefix again. One number per tile, the thing it measures under
+ * it in words rather than a metric name: "context assembly p95 · budget
+ * 100ms" is readable by the person whose agent it is, `ctx_p95` is not.
+ */
+.prf-note {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.prf-empty {
+  padding: 12px;
+  border: 1px dashed var(--hairline);
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.prf-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.prf-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.prf-field > span {
+  flex: none;
+  width: 108px;
+}
+
+.prf-input,
+.prf-select {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.prf-details {
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.prf-details > summary {
+  cursor: pointer;
+}
+
+.prf-pre {
+  margin: 6px 0 0;
+  padding: 9px 11px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.prf-grid {
+  display: grid;
+  flex: none;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.prf-stat {
+  padding: 9px 11px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+/* A missed budget is the only coloured thing on the page. */
+.prf-stat.is-over {
+  border-color: color-mix(in srgb, var(--warn, #c9821a) 55%, transparent);
+  background: color-mix(in srgb, var(--warn, #c9821a) 10%, transparent);
+}
+
+.prf-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.prf-key {
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+.prf-actions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.prf-btn {
+  padding: 6px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.prf-btn:hover {
+  background: var(--hover, color-mix(in srgb, var(--text) 6%, transparent));
+}
+
+.prf-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.prf-report {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--ok, #2d9d5f) 45%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ok, #2d9d5f) 8%, transparent);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.prf-report.is-bad {
+  border-color: color-mix(in srgb, var(--danger, #d7373f) 50%, transparent);
+  background: color-mix(in srgb, var(--danger, #d7373f) 8%, transparent);
+}
+
+.prf-list {
+  margin: 6px 0 4px;
+  padding-left: 18px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}

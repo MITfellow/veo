@@ -107,10 +107,10 @@ export class MemoryReader {
       ...diversified,
     ];
 
-    this.deps.store.markUsed(
-      items.map((item) => item.fact.id),
-      input.now,
-    );
+    // Recall no longer marks usage: the runner appends `memory.used`
+    // once the facts have actually reached an assembled context (M9).
+    // "Recalled" and "put in front of the model" are different numbers,
+    // and the hit rate is only meaningful if they are counted apart.
 
     return { items, candidates: pool.length, weights };
   }

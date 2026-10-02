@@ -126,7 +126,13 @@ interface CapState {
 /** How much of the budget a post-compaction retry is allowed (§23). */
 const OVERFLOW_RETRY_SCALE = 0.6;
 
-const DEFAULT_SYSTEM =
+/**
+ * Exported because replay needs it (§34.5): rebuilding a historical
+ * context means rebuilding the same kernel text the run used, and a copy
+ * of this string in the replay path would drift from this one and make
+ * every old run look like it had changed.
+ */
+export const DEFAULT_SYSTEM =
   'You are a personal agent. You are careful, concrete and honest. ' +
   'When you do not know something, say so plainly rather than guessing.';
 
@@ -172,6 +178,12 @@ export interface RunnerDeps {
   fence?: boolean;
   /** Degradation level to report in the Situation block (§27). */
   degradation?: () => string;
+  /**
+   * The outbox read model (M9): which external effects this run has
+   * actually *committed*, by summary. The action-claim check needs the
+   * difference between "a tool ran" and "the email was sent".
+   */
+  committedEffects?: (runId: string) => string[];
   /**
    * Context assembly (M5). Defaults are built from the other deps, so a
    * caller that does not care about context gets a working one.
@@ -429,6 +441,7 @@ export class Runner {
         });
 
         /* ── assemble (pure) ───────────────────────────────────────────── */
+        const assemblyStarted = performance.now();
         const context = this.assembleFrom(
           request,
           gathered.snapshot,
@@ -456,6 +469,7 @@ export class Runner {
               reason: `${eviction.reason}:${eviction.id}`,
             })),
             policyVersion: context.policyVersion,
+            window: this.windowFor(limits, contextScale),
           },
           principal: 'system',
           trust: 'SYSTEM',
@@ -464,6 +478,44 @@ export class Runner {
           stepId,
           correlationId: runId,
         });
+
+        // §32's budget for this stage, measured rather than assumed (M9).
+        // A timing is state: it is how the system behaved at an instant,
+        // and the honest place for it is the same log as everything else.
+        events.append({
+          type: 'perf.sampled',
+          payload: {
+            stage: 'context.assembly',
+            ms: Math.round((performance.now() - assemblyStarted) * 1000) / 1000,
+            detail: `${context.totalTokens} tokens`,
+          },
+          principal: 'system',
+          trust: 'SYSTEM',
+          sessionId: request.sessionId,
+          runId,
+          stepId,
+          correlationId: runId,
+        });
+
+        // Which recalled facts actually reached the model (M9). The recall
+        // event says what was *found*; this says what was *used*, and the
+        // hit rate is the ratio of the two. Counting only the first is how
+        // a retrieval system convinces itself it is working.
+        if (gathered.snapshot.memories.length > 0) {
+          events.append({
+            type: 'memory.used',
+            payload: {
+              factIds: gathered.snapshot.memories.map((m) => m.id),
+              offered: gathered.snapshot.memories.length,
+            },
+            principal: request.principal,
+            trust: 'SYSTEM',
+            sessionId: request.sessionId,
+            runId,
+            stepId,
+            correlationId: runId,
+          });
+        }
 
         // §25: what the constitution's checks are allowed to know about this
         // step. Assembled here, from the same snapshot the context came
@@ -479,17 +531,22 @@ export class Runner {
           previousAgentTurn:
             [...snapshot.conversation].reverse().find((t) => t.role === 'assistant')?.content ?? '',
           toolsCompleted: observations.filter((o) => o.ok).map((o) => o.tool),
-          // Committed external effects are not threaded through the runner
-          // yet (M8 owns the outbox read model); the action-claim check
-          // falls back to tool names, which is weaker and is listed as such
-          // in M7.md rather than papered over.
-          effectsCommitted: [],
+          // The outbox read model M7 and M8 owed (M9). The action-claim
+          // check can now distinguish "a tool ran" from "an effect was
+          // actually committed", which is the difference between the agent
+          // having tried to send the email and having sent it.
+          effectsCommitted: this.deps.committedEffects?.(runId) ?? [],
           recalled: snapshot.memories.map((m) => ({
             id: m.id,
             label: m.text,
             confidence: m.confidence,
           })),
-          contradicting: [],
+          // Filled since M9. A recalled fact that disagrees with the turn
+          // is the single most valuable thing a long memory produces, and
+          // a check that can never see one is decoration.
+          contradicting: snapshot.memories
+            .filter((m) => (m.contradiction ?? 0) > 0 || m.status === 'disputed')
+            .map((m) => ({ id: m.id, label: m.text, confidence: m.confidence })),
           factCount: snapshot.profile.factCount,
           hasIdentityCard: snapshot.identity !== null,
           constraints: snapshot.constraints.map((c) => ({ id: c.id, text: c.text })),
@@ -934,7 +991,7 @@ export class Runner {
       });
     }
 
-    const window = Math.max(512, Math.floor(limits.maxContextTokens * scale));
+    const window = this.windowFor(limits, scale);
     const policy = {
       ...this.contextPolicy,
       window,
@@ -958,6 +1015,11 @@ export class Runner {
         conversation,
       },
     });
+  }
+
+  /** One definition of the window, used by the assembler and the log. */
+  private windowFor(limits: { maxContextTokens: number }, scale: number): number {
+    return Math.max(512, Math.floor(limits.maxContextTokens * scale));
   }
 
   private async stream(

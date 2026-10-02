@@ -94,6 +94,13 @@ export const IDENTITY_CARD_MAX_TOKENS = 400;
 export interface StateSnapshot {
   /** Kernel instructions: invariants, tool protocol, fence rules. */
   kernel: string;
+  /**
+   * §29's persona, already rendered as sentences (decision 036). Part of
+   * block 1 rather than a block of its own: §21's fourteen blocks have no
+   * slot for voice, and voice that can be evicted is voice that changes
+   * under pressure.
+   */
+  persona?: string[];
   /** The user-editable behavioural contract (§25). Empty string if unset. */
   constitution: string;
   /**
@@ -181,6 +188,14 @@ export interface MemoryItem {
   pinned: boolean;
   /** Provenance of the content this came from. */
   trust: TrustLevel;
+  /**
+   * §22.6's contradiction bonus for *this* turn, 0 when it did not fire
+   * (M9). Threaded through so the `disagreement-surfaced` check can see
+   * which recalled facts disagreed with what the user just said — before
+   * M9 that evidence list was always empty, which made the check
+   * permanently `unverifiable` and therefore decorative.
+   */
+  contradiction?: number;
 }
 
 export interface WorkingItem {

@@ -27,6 +27,17 @@ import type { BiasAuditor } from '../cognition/calibration/audit.js';
 import { report as calibrationReport } from '../cognition/calibration/confidence.js';
 import type { Schedule, ScheduleStore } from '../orchestration/schedule.js';
 import { ScheduleParseError } from '../orchestration/schedule.js';
+import { IDENTITY_CARD_MAX_TOKENS } from '../cognition/context/types.js';
+import { PersonaSchema, type PersonaStore } from '../cognition/persona/store.js';
+import { traceOf, renderTrace } from '../observability/trace.js';
+import { computeMetrics } from '../observability/metrics.js';
+import { exportAll, importAll, type ExportDocument } from '../portability/export.js';
+import { verifyBackup } from '../portability/backup.js';
+import type { Substrate } from '../substrate/index.js';
+import type { Vault } from '../security/vault.js';
+import type { Keyring } from '../security/keyring.js';
+import { KeyringError, LockedError } from '../security/keyring.js';
+import { VaultError } from '../security/vault.js';
 import type { JobQueue } from '../orchestration/queue.js';
 import { LEVEL_MEANING, type Degradation } from '../orchestration/degradation.js';
 import { CronParseError } from '../orchestration/cron.js';
@@ -82,6 +93,23 @@ export interface ApiDeps {
   queue?: JobQueue;
   /** §27's ladder. The `degradation` function above reads from it. */
   ladder?: Degradation;
+  /** §29's persona (M9). */
+  persona?: PersonaStore;
+  /**
+   * §13's vault and keyring (M9). Omitted → the vault routes 404, which is
+   * the honest answer for a build that has no secret storage wired.
+   */
+  vault?: Vault;
+  keyring?: Keyring;
+  /**
+   * The whole substrate plus its file path, for §29's portability routes.
+   * Nothing else in the API needs them, which is why they are separate
+   * from `storage`/`events`: export, import and backup verification are
+   * the only operations that are about the database rather than about
+   * what is in it.
+   */
+  substrate?: Substrate;
+  dbPath?: string;
 }
 
 /** §29: `{ decision, scope }`. Validated like every other boundary. */
@@ -122,6 +150,29 @@ const MemoryQuery = z.object({
   pinned: z.enum(['true', 'false']).optional(),
   limit: z.coerce.number().int().min(1).max(500).default(100),
 });
+
+const SecretBody = z.object({
+  name: z.string().min(1).max(64),
+  value: z.string().min(1).max(8192),
+  label: z.string().max(120).optional(),
+});
+
+/**
+ * A locked vault is 423, not 500. The difference matters to a client: one
+ * means "unlock and retry", the other means "something is broken".
+ */
+function vaultError(res: ServerResponse, error: unknown): void {
+  if (error instanceof LockedError) {
+    return json(res, 423, { error: 'locked', detail: 'the vault is locked — unlock it first' });
+  }
+  if (error instanceof KeyringError) {
+    return json(res, 400, { error: 'keyring', detail: error.message });
+  }
+  if (error instanceof VaultError) {
+    return json(res, 400, { error: 'vault', detail: error.message });
+  }
+  throw error;
+}
 
 const CreateScheduleBody = z.object({
   name: z.string().min(1).max(120),
@@ -477,11 +528,27 @@ export class Api {
       json(res, 202, { approvalId: params.id, runId: record.runId, resumed: true });
     });
 
-    this.add('GET', '/runs/:id/trace', ({ res, params }) => {
+    this.add('GET', '/runs/:id/trace', ({ res, params, url }) => {
       const runId = params.id!;
       const all = events.read({ runId });
       if (all.length === 0) return json(res, 404, { error: 'no_such_run' });
+
+      // §30: "renderable as readable text". The same data either way — the
+      // text form is built from the structured one, so the two can never
+      // tell different stories about the same run.
+      const structured = traceOf(runId, all);
+      if (url.searchParams.get('format') === 'text') {
+        const body = renderTrace(structured!);
+        res.writeHead(200, {
+          'content-type': 'text/plain; charset=utf-8',
+          'cache-control': 'no-store',
+        });
+        res.end(body);
+        return;
+      }
+
       json(res, 200, {
+        trace: structured,
         runId,
         // §30: the trace is rendered from the log, which is why it is
         // available for a run that finished years ago.
@@ -540,6 +607,19 @@ export class Api {
           retired: all.filter((fact) => fact.status === 'retired').length,
           pinned: all.filter((fact) => fact.pinned).length,
         },
+      });
+    });
+
+    // §29 names this one and nothing had needed it until the client
+    // wanted to show the user the card the model actually sees.
+    this.add('GET', '/memory/identity-card', ({ res, principal }) => {
+      if (memory === undefined) return json(res, 404, { error: 'no_memory' });
+      const card = memory.store.identityCard(principal);
+      json(res, 200, {
+        card,
+        // The same cap the context applies, stated rather than implied, so
+        // a user reading this page knows they are seeing all of it.
+        maxTokens: IDENTITY_CARD_MAX_TOKENS,
       });
     });
 
@@ -675,7 +755,11 @@ export class Api {
         });
       }
       const reason = url.searchParams.get('reason') ?? `the user asked to forget ${subject}`;
-      const targets = memory.store.bySubject(subject, { includeInactive: true });
+      // No limit here: "forget everything about X" must mean everything.
+      const targets = memory.store.bySubject(subject, {
+        includeInactive: true,
+        limit: 1_000_000,
+      });
       for (const fact of targets) memory.store.forget(fact.id, reason, principal, 'USER');
       json(res, 200, { forgotten: targets.map((fact) => fact.id), shredded: true });
     });
@@ -868,6 +952,165 @@ export class Api {
         // or the metrics would measure how often the user looked at them.
         bias: auditor.run(principal, { write: false }),
       });
+    });
+
+
+    /* ─────────────────── §30 — metrics, §13.5 — backups ───────────────── */
+
+    this.add('GET', '/metrics', ({ res, url }) => {
+      const days = Math.min(Math.max(Number(url.searchParams.get('days') ?? '30'), 1), 365);
+      json(
+        res,
+        200,
+        computeMetrics(
+          { storage: this.deps.storage, events: this.deps.events, now: this.deps.clock.now() },
+          days,
+        ),
+      );
+    });
+
+    this.add('POST', '/export', ({ res }) => {
+      const substrate = this.deps.substrate;
+      if (substrate === undefined) return json(res, 404, { error: 'no_substrate' });
+      // Secrets leave as ciphertext with their wrapped keys. §13 does not
+      // have a portability exception (decision 038).
+      json(res, 200, exportAll(substrate));
+    });
+
+    this.add('POST', '/import', async ({ res, body }) => {
+      const substrate = this.deps.substrate;
+      if (substrate === undefined) return json(res, 404, { error: 'no_substrate' });
+      const doc = (await body()) as ExportDocument;
+      const outcome = importAll(substrate, doc);
+      json(res, outcome.ok ? 200 : 409, outcome);
+    });
+
+    this.add('POST', '/backup/verify', ({ res }) => {
+      const substrate = this.deps.substrate;
+      const dbPath = this.deps.dbPath;
+      if (substrate === undefined || dbPath === undefined) {
+        return json(res, 404, { error: 'no_substrate' });
+      }
+      // §13.5: an untested backup is a rumor. This is the test.
+      json(res, 200, verifyBackup({ live: substrate, dbPath, now: this.deps.clock.now() }));
+    });
+
+    /* ───────────────────────── §13 — the vault ────────────────────────── */
+
+    // Names and metadata only, ever. There is no route that returns a
+    // secret value, and that is not an oversight to be fixed later: a
+    // value that can be fetched over HTTP is a value that lives outside
+    // the vault boundary the moment someone adds a logger.
+
+    const vault = this.deps.vault;
+    const keyring = this.deps.keyring;
+
+    this.add('GET', '/vault/secrets', ({ res }) => {
+      if (vault === undefined || keyring === undefined) return json(res, 404, { error: 'no_vault' });
+      json(res, 200, { state: keyring.state(), secrets: vault.list() });
+    });
+
+    this.add('POST', '/vault/secrets', async ({ res, body, principal }) => {
+      if (vault === undefined) return json(res, 404, { error: 'no_vault' });
+      const parsed = SecretBody.safeParse(await body());
+      if (!parsed.success) return json(res, 400, { error: 'bad_request', detail: parsed.error.issues });
+      try {
+        const ref = await vault.create(parsed.data.name, parsed.data.value, {
+          principal,
+          ...(parsed.data.label === undefined ? {} : { label: parsed.data.label }),
+        });
+        json(res, 201, { ref: `secret://${ref.name}#${ref.version}` });
+      } catch (error) {
+        return vaultError(res, error);
+      }
+    });
+
+    this.add('POST', '/vault/secrets/:name/rotate', async ({ res, params, body, principal }) => {
+      if (vault === undefined) return json(res, 404, { error: 'no_vault' });
+      const parsed = z.object({ value: z.string().min(1).max(8192) }).safeParse(await body());
+      if (!parsed.success) return json(res, 400, { error: 'bad_request' });
+      try {
+        const ref = await vault.rotate(params.name ?? '', parsed.data.value, { principal });
+        json(res, 200, { ref: `secret://${ref.name}#${ref.version}` });
+      } catch (error) {
+        return vaultError(res, error);
+      }
+    });
+
+    this.add('DELETE', '/vault/secrets/:name', ({ res, params, principal }) => {
+      if (vault === undefined) return json(res, 404, { error: 'no_vault' });
+      try {
+        const destroyed = vault.destroy(params.name ?? '', 'all', { principal });
+        json(res, destroyed > 0 ? 200 : 404, { destroyed });
+      } catch (error) {
+        return vaultError(res, error);
+      }
+    });
+
+    this.add('POST', '/vault/unlock', async ({ res, body }) => {
+      if (keyring === undefined) return json(res, 404, { error: 'no_vault' });
+      const parsed = z.object({ passphrase: z.string().min(1).max(512) }).safeParse(await body());
+      if (!parsed.success) return json(res, 400, { error: 'bad_request' });
+      try {
+        if (keyring.state() === 'uninitialized') {
+          const result = await keyring.initialize(parsed.data.passphrase);
+          await keyring.unlock(parsed.data.passphrase);
+          // Shown exactly once, and never stored anywhere we can read it.
+          return json(res, 201, { state: keyring.state(), recoveryCode: result.recoveryCode });
+        }
+        await keyring.unlock(parsed.data.passphrase);
+        json(res, 200, { state: keyring.state() });
+      } catch (error) {
+        return vaultError(res, error);
+      }
+    });
+
+    this.add('POST', '/vault/lock', ({ res }) => {
+      if (keyring === undefined) return json(res, 404, { error: 'no_vault' });
+      keyring.lock();
+      json(res, 200, { state: keyring.state() });
+    });
+
+    this.add('POST', '/vault/panic', async ({ res, body }) => {
+      if (keyring === undefined) return json(res, 404, { error: 'no_vault' });
+      // Irreversible, so it needs the word typed out. A confirmation
+      // dialog can be clicked through; a required literal cannot be
+      // clicked through by accident.
+      const parsed = z.object({ confirm: z.literal('destroy my secrets') }).safeParse(await body());
+      if (!parsed.success) {
+        return json(res, 400, {
+          error: 'confirmation_required',
+          detail:
+            'This destroys the keyring. Every secret becomes permanently unreadable, ' +
+            'including in every backup that already exists. Send { "confirm": "destroy my secrets" }.',
+        });
+      }
+      keyring.panic();
+      json(res, 200, { state: keyring.state(), destroyed: true });
+    });
+
+    /* ─────────────────────────── §29 — persona ────────────────────────── */
+
+    // Voice, not rules. The constitution is what the agent may do; this is
+    // how it sounds doing it (decision 036). A whole-document PUT, because
+    // a partial update of six fields is a merge nobody can read back.
+
+    this.add('GET', '/persona', ({ res, principal }) => {
+      const persona = this.deps.persona;
+      if (persona === undefined) return json(res, 404, { error: 'no_persona' });
+      const current = persona.get(principal);
+      json(res, 200, { persona: current, rendered: persona.lines(principal) });
+    });
+
+    this.add('PUT', '/persona', async ({ res, body, principal }) => {
+      const persona = this.deps.persona;
+      if (persona === undefined) return json(res, 404, { error: 'no_persona' });
+      const parsed = PersonaSchema.safeParse(await body());
+      if (!parsed.success) {
+        return json(res, 400, { error: 'invalid_persona', detail: parsed.error.issues });
+      }
+      const saved = persona.put(principal, parsed.data);
+      json(res, 200, { persona: saved, rendered: persona.lines(principal) });
     });
 
     /* ────────────────── §28 — schedules, jobs, degradation ────────────── */

@@ -88,7 +88,7 @@ describe('the runner logs the context it used (§21)', () => {
       totalTokens: number;
     };
     expect(payload.digest).toMatch(/^[0-9a-f]{16}$/);
-    expect(payload.policyVersion).toBe('ctx-1/tpl-3');
+    expect(payload.policyVersion).toBe('ctx-1/tpl-4');
     expect(payload.totalTokens).toBeGreaterThan(0);
     expect(payload.blocks.map((block) => block.name)).toContain('conversation');
     substrate.close();
@@ -150,8 +150,8 @@ describe('overflow → compact → one retry (§23)', () => {
     const assemblies = events.filter((event) => event.type === 'context.assembled');
     expect(assemblies).toHaveLength(2);
     const versions = assemblies.map((event) => (event.payload as { policyVersion: string }).policyVersion);
-    expect(versions[0]).toBe('ctx-1/tpl-3');
-    expect(versions[1]).toBe('ctx-1-reduced/tpl-3');
+    expect(versions[0]).toBe('ctx-1/tpl-4');
+    expect(versions[1]).toBe('ctx-1-reduced/tpl-4');
     expect((assemblies[1]!.payload as { totalTokens: number }).totalTokens).toBeLessThan(
       (assemblies[0]!.payload as { totalTokens: number }).totalTokens,
     );

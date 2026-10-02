@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createTestSubstrate } from '../../src/substrate/index.js';
+import { MemoryStore } from '../../src/cognition/memory/store.js';
 import { snapshotDigest, snapshotProjections } from '../../src/substrate/projections/snapshot.js';
 import { seedWorld } from '../fixtures/world.js';
 import type { Projector } from '../../src/substrate/events/log.js';
@@ -97,6 +98,53 @@ describe('rebuild-identity', () => {
     const total =
       s.storage.get<{ n: number }>('SELECT SUM(n) AS n FROM late_stats')?.n ?? 0;
     expect(total).toBe(500);
+    s.close();
+  });
+
+  it('keeps memory usage counters, because they are events and not side writes', () => {
+    // The regression this protects against is subtle and was real: recall
+    // used to bump `facts.use_count` with a direct UPDATE, so the counter
+    // existed nowhere in the log and a rebuild silently reset it — which
+    // made §34.2's "byte-identical" claim false on any database that had
+    // actually been used, and would have quietly degraded decay scoring
+    // after every restore. Found by running `POST /backup/verify` against
+    // a real database rather than a freshly seeded one.
+    const s = createTestSubstrate();
+    const store = new MemoryStore({
+      storage: s.storage,
+      events: s.events,
+      clock: s.clock,
+      ids: s.ids,
+    });
+    const fact: string = store.write({
+      principal: 'user:ara',
+      subject: { id: 'self', kind: 'self', label: 'you' },
+      predicate: 'lives_in',
+      object: 'Lisbon',
+      basis: 'asserted_by_user',
+      confidence: 0.9,
+      stability: 'slow',
+      sensitivity: 'normal',
+      trust: 'USER',
+      sources: [{ eventId: 'evt-1', quote: 'I live in Lisbon' }],
+    });
+
+    store.markUsed([fact], 'user:ara');
+    store.markUsed([fact], 'user:ara');
+
+    const used = () =>
+      s.storage.get<{ use_count: number; last_used_at: number | null }>(
+        'SELECT use_count, last_used_at FROM facts WHERE fact_id = ?',
+        [fact],
+      )!;
+
+    const before = used();
+    expect(before.use_count).toBe(2);
+    expect(before.last_used_at).not.toBeNull();
+
+    s.events.rebuild();
+
+    expect(used()).toEqual(before);
     s.close();
   });
 

@@ -1,7 +1,7 @@
 scenario: constitution-amended
 window: 4000
-policy: ctx-1/tpl-3
-digest: aa384c94c6105020
+policy: ctx-1/tpl-4
+digest: d7953d134d43d77f
 total_tokens: 1089
 truncated: false
 

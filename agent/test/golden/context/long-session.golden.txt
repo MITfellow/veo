@@ -1,7 +1,7 @@
 scenario: long-session
 window: 2000
-policy: ctx-1/tpl-3
-digest: 5abb605ac7a95cc0
+policy: ctx-1/tpl-4
+digest: cfd2765bf2ed5775
 total_tokens: 1995
 truncated: true
 

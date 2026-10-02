@@ -8,6 +8,7 @@ import { JsonLogger, NullLogger } from './log.js';
 import type { Clock, Hashing, Ids, Logger, Storage } from './ports.js';
 import { CORE_PROJECTORS } from './projections/core.js';
 import { factsProjector } from './projections/facts.js';
+import { personaProjector } from './projections/persona.js';
 import { schedulingProjector } from './projections/scheduling.js';
 import { constitutionProjector } from './projections/constitution.js';
 import { SqliteStorage } from './storage/sqlite.js';
@@ -51,6 +52,7 @@ export const ALL_PROJECTORS: readonly Projector[] = Object.freeze([
   factsProjector,
   constitutionProjector,
   schedulingProjector,
+  personaProjector,
 ]);
 
 export function createSubstrate(options: SubstrateOptions = {}): Substrate {

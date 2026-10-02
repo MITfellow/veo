@@ -21,7 +21,10 @@
     "demo:m5": "tsx scripts/demo-m5.ts",
     "demo:m6": "tsx scripts/demo-m6.ts",
     "demo:m7": "tsx scripts/demo-m7.ts",
-    "demo:m8": "tsx scripts/demo-m8.ts"
+    "demo:m8": "tsx scripts/demo-m8.ts",
+    "demo:m9": "tsx scripts/demo-m9.ts",
+    "replay": "tsx scripts/replay.ts",
+    "perf": "tsx scripts/perf.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",

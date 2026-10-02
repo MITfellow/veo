@@ -56,7 +56,9 @@ export class StoredMemorySource implements MemorySource {
       // Pins are rendered by their own block (§21). Letting them through
       // here too puts the same sentence in the prompt twice, which costs
       // budget and reads as though the agent is insisting.
-      items: result.items.filter((item) => !item.fact.pinned).map((item) => toItem(item.fact)),
+      items: result.items
+        .filter((item) => !item.fact.pinned)
+        .map((item) => toItem(item.fact, item.components.contradiction ?? 0)),
     };
   }
 
@@ -167,8 +169,9 @@ function keyOf(query: RecallQuery): string {
   return `${query.principal}|${query.sessionId}|${query.limit}|${query.text}`;
 }
 
-function toItem(fact: Fact): MemoryItem {
+function toItem(fact: Fact, contradiction = 0): MemoryItem {
   return {
+    ...(contradiction > 0 ? { contradiction } : {}),
     id: fact.id,
     text: factLine(fact),
     basis: fact.basis,

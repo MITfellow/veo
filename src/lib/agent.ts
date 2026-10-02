@@ -169,6 +169,43 @@ export interface DegradationView {
   signals: Array<{ signal: string; level: string; detail: string; since: number }>;
 }
 
+export interface PersonaView {
+  agentName: string;
+  addressUser: string;
+  formality: 'plain' | 'warm' | 'formal';
+  length: 'brief' | 'normal' | 'thorough';
+  emoji: boolean;
+  language: string;
+  notes: string;
+}
+
+export interface MetricsView {
+  runs: { total: number; finished: number; failed: number; byTrigger: Record<string, number> };
+  latency: {
+    modelMs: { p50: number | null; p95: number | null };
+    contextAssemblyMs: { p95: number | null; budgetMs: number; met: boolean | null };
+    memoryRecallMs: { p95: number | null; budgetMs: number; met: boolean | null };
+  };
+  tokens: { input: number; output: number; perRun: number | null };
+  cost: { cents: number };
+  tools: { succeeded: number; failed: number; denied: number; successRate: number | null };
+  memory: { facts: number; pinned: number; hitRate: number | null };
+  context: { utilization: number | null; evictions: number };
+  honesty: { agreementRate: number | null; calibrationError: number | null };
+  approvals: { requested: number; granted: number; denied: number };
+  degradation: { current: string };
+}
+
+export interface BackupReport {
+  ok: boolean;
+  events: number;
+  chain: { ok: boolean };
+  projections: { digestMatches: boolean };
+  contents: { facts: number; sessions: number; schedules: number; constitutionVersion: number };
+  notes: string[];
+  elapsedMs: number;
+}
+
 export interface AgentSession {
   id: string;
   title: string | null;
@@ -239,6 +276,18 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(`agent returned ${response.status}: ${body.slice(0, 200)}`);
   }
   return (await response.json()) as T;
+}
+
+/** The same call, for routes that answer in text rather than JSON. */
+async function callText(path: string, init?: RequestInit): Promise<string> {
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}${path}`, { ...init, cache: 'no-store' });
+  } catch (error) {
+    throw new AgentUnavailableError(error instanceof Error ? error.message : 'network error');
+  }
+  if (!response.ok) throw new Error(`agent returned ${response.status}`);
+  return response.text();
 }
 
 export const agent = {
@@ -385,6 +434,33 @@ export const agent = {
 
   async degradation(): Promise<DegradationView> {
     return call('/degradation');
+  },
+
+  /* ──────────────────── §29/§30: persona, proof, portability ───────────── */
+
+  async persona(): Promise<{ persona: PersonaView; rendered: string[] }> {
+    return call('/persona');
+  },
+
+  async savePersona(persona: PersonaView): Promise<{ persona: PersonaView; rendered: string[] }> {
+    return call('/persona', { method: 'PUT', body: JSON.stringify(persona) });
+  },
+
+  async metrics(days = 30): Promise<MetricsView> {
+    return call(`/metrics?days=${days}`);
+  },
+
+  /** The readable trace — §30's "why did it say that?". */
+  async traceText(runId: string): Promise<string> {
+    return callText(`/runs/${runId}/trace?format=text`);
+  },
+
+  async verifyBackup(): Promise<BackupReport> {
+    return call('/backup/verify', { method: 'POST' });
+  },
+
+  async exportAll(): Promise<unknown> {
+    return call('/export', { method: 'POST' });
   },
 
   async approvals(): Promise<PendingApproval[]> {

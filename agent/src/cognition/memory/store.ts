@@ -33,6 +33,13 @@ import {
   type Rule,
 } from './types.js';
 
+/**
+ * How many facts about one subject a caller gets unless it asks for
+ * more. Large enough that no real person's subject is truncated, small
+ * enough that a pathological one cannot stall a turn.
+ */
+export const DEFAULT_SUBJECT_LIMIT = 2_000;
+
 export interface MemoryStoreDeps {
   storage: Storage;
   events: EventLog;
@@ -218,14 +225,32 @@ export class MemoryStore {
     this.deps.storage.run('DELETE FROM fact_embeddings WHERE fact_id = ?', [factId]);
   }
 
-  /** Everything known about a subject, newest belief first. */
-  bySubject(subjectId: string, options: { includeInactive?: boolean } = {}): Fact[] {
+  /**
+   * Everything known about a subject, most-believed first.
+   *
+   * **Bounded.** Found by M9's 100k/50k pass: with 25k facts about one
+   * subject this took half a second, not because the lookup is slow
+   * (migration 013 added the expression index the query needs) but
+   * because deserialising 25k facts takes that long whatever you do. No
+   * interactive path wants 25k facts, so the default is a limit; callers
+   * that genuinely need the lot — export, the "forget everything about
+   * X" path — pass their own.
+   */
+  bySubject(
+    subjectId: string,
+    options: { includeInactive?: boolean; limit?: number } = {},
+  ): Fact[] {
     const statusFilter = options.includeInactive === true ? '' : " AND status = 'active'";
     const rows = this.deps.storage.all<FactRow>(
+      // The expression matches migration 013's index exactly — change one
+      // and the other stops being used, silently, which is the usual way
+      // an index quietly stops earning its keep.
       `SELECT ${FACT_COLUMNS} FROM facts
-       WHERE json_extract(subject, '$.id') = ? AND superseded_at IS NULL${statusFilter}
-       ORDER BY confidence DESC, recorded_at DESC`,
-      [subjectId],
+       WHERE (CASE WHEN json_valid(subject) THEN json_extract(subject, '$.id') ELSE subject END) = ?
+         AND superseded_at IS NULL${statusFilter}
+       ORDER BY confidence DESC, recorded_at DESC
+       LIMIT ?`,
+      [subjectId, options.limit ?? DEFAULT_SUBJECT_LIMIT],
     );
     return rows.map(toFact);
   }
@@ -366,13 +391,23 @@ export class MemoryStore {
     }
   }
 
-  markUsed(factIds: readonly string[], at: number): void {
-    for (const id of factIds) {
-      this.deps.storage.run(
-        'UPDATE facts SET last_used_at = ?, use_count = use_count + 1 WHERE fact_id = ? AND superseded_at IS NULL',
-        [at, id],
-      );
-    }
+  /**
+   * Record that these facts were put in front of the model.
+   *
+   * An **event**, not a direct write. It used to be an `UPDATE facts SET
+   * use_count = use_count + 1`, which made the usage counters state that
+   * existed nowhere in the log: a rebuild reset them, and §34.2's
+   * "byte-identical" claim was quietly false on any database that had
+   * been used. Found by pointing `POST /backup/verify` at a real one.
+   */
+  markUsed(factIds: readonly string[], principal: string): void {
+    if (factIds.length === 0) return;
+    this.deps.events.append({
+      type: 'memory.used',
+      principal,
+      trust: 'SYSTEM',
+      payload: { factIds: [...factIds], offered: factIds.length },
+    });
   }
 
   /* ──────────────────────────── embeddings ───────────────────────────── */

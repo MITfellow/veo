@@ -41,6 +41,13 @@ export class SqliteStorage implements Storage {
     this.db.exec(sql);
   }
 
+  backupTo(path: string): void {
+    // VACUUM INTO is better-sqlite3's synchronous equivalent of the online
+    // backup API: one consistent snapshot, WAL included, no locks held on
+    // the live database beyond the read.
+    this.db.exec(`VACUUM INTO '${path.replace(/'/g, "''")}'`);
+  }
+
   all<T>(sql: string, params?: SqlParams): T[] {
     return this.db.prepare(sql).all(...bind(params)) as T[];
   }
