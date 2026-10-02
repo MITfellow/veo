@@ -338,7 +338,12 @@ export function Sidebar({
           <div className="empty-list">No results for “{query}”</div>
         )}
         {unreadOnly && rows.length === 0 && <div className="empty-list">No unread messages</div>}
+        <div role="listbox" aria-label="Conversations">{(query ? rows : normal).map(renderRow)}</div>
+
         {!query && !unreadOnly && state.chats.every((c) => isAgentChat(c, state.contacts)) && (
+          /* Below the list, not above it: the agent's own row is a real
+             conversation and the empty state is about the ones you have not
+             started yet. */
           <div className="empty-first-run">
             <div className="efr-glyph" aria-hidden="true">
               <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4">
@@ -352,7 +357,6 @@ export function Sidebar({
             </button>
           </div>
         )}
-        <div role="listbox" aria-label="Conversations">{(query ? rows : normal).map(renderRow)}</div>
 
         {query.trim().length >= 2 && messageHits.length > 0 && (
           <>
