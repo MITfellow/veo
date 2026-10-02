@@ -3635,3 +3635,216 @@
 .mem-footer .btn.is-danger {
   color: var(--red);
 }
+
+/* ─────────────────────────── §25: the constitution ───────────────────────── */
+/*
+ * The visual job here is to keep three kinds of promise from looking alike.
+ * An article enforced in code, an article screened by a checker, and an
+ * article that is merely said are different things, and a panel that styled
+ * them identically would be making the same claim the whole milestone
+ * exists to stop making.
+ */
+.con-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 6px 0 2px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.con-hash {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.con-section {
+  margin: 14px 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.con-list {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.con-row,
+.con-proposal {
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--panel);
+}
+
+.con-row.is-overridden .con-text {
+  text-decoration: line-through;
+  color: var(--text-dim);
+}
+
+.con-row-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.con-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.con-mode {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  color: var(--text-dim);
+}
+
+.con-mode-structural {
+  border-color: #2f7d4f;
+  color: #2f7d4f;
+}
+
+.con-mode-checked {
+  border-color: #2f5f9e;
+  color: #2f5f9e;
+}
+
+.con-lock {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.con-check {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.con-text {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.con-why,
+.con-cites {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+.con-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.con-add {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.con-counts {
+  display: flex;
+  gap: 10px;
+  font-size: 11px;
+}
+
+.con-ok {
+  color: #2f7d4f;
+}
+
+.con-bad {
+  color: #b3261e;
+  font-weight: 600;
+}
+
+.con-dim {
+  color: var(--text-dim);
+}
+
+.con-violation {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 4px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+/*
+ * The constitution panel keeps its own class names rather than borrowing the
+ * memory panel's. Found by a test: two `.mem-tabs` on one screen made every
+ * memory selector ambiguous. Shared *looks* are fine; shared hooks are not.
+ */
+.con-tabs {
+  display: flex;
+  gap: 6px;
+  margin: 10px 0 8px;
+  flex: none;
+}
+
+.con-tab {
+  flex: 1;
+  padding: 6px 8px;
+  font-size: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--hairline);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.con-tab.is-on {
+  background: var(--panel-2, rgba(127, 127, 127, 0.12));
+  color: var(--text);
+  font-weight: 600;
+}
+
+.con-input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  font-size: 13px;
+  border-radius: 8px;
+  border: 1px solid var(--hairline);
+  background: transparent;
+  color: var(--text);
+}
+
+.con-btn {
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--hairline);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.con-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.con-note,
+.con-empty {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-dim);
+  margin: 6px 0;
+}

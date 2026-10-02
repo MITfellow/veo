@@ -23,6 +23,7 @@
 import type { Event } from '../substrate/events/envelope.js';
 import type { EventLog } from '../substrate/events/log.js';
 import { minTrust, type TrustLevel } from '../substrate/events/types.js';
+import type { ConstitutionView } from '../cognition/constitution/render.js';
 import type { Clock } from '../substrate/ports.js';
 import type { Compactor } from '../cognition/compaction.js';
 import type {
@@ -77,6 +78,12 @@ export interface SnapshotterDeps {
   tools?: ToolSource;
   /** The user's constitution (§25). A function, because the user may edit it. */
   constitution?: () => string;
+  /**
+   * The structured constitution (§25, M7). A function for the same reason:
+   * the document can be amended between two turns of one session, and a
+   * value captured at construction would render yesterday's contract.
+   */
+  constitutionDoc?: () => ConstitutionView;
   kernel?: () => string;
   timezone?: string;
   locale?: string;
@@ -143,6 +150,7 @@ export class Snapshotter {
     const snapshot: StateSnapshot = {
       kernel: this.deps.kernel?.() ?? '',
       constitution: this.deps.constitution?.() ?? '',
+      constitutionDoc: this.deps.constitutionDoc?.() ?? null,
       identity: memory?.identity(input.principal) ?? null,
       constraints: memory?.constraints(input.principal) ?? [],
       situation: {

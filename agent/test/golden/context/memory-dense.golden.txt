@@ -1,7 +1,7 @@
 scenario: memory-dense
 window: 4000
-policy: ctx-1/tpl-1
-digest: 84ea0b23e75839ea
+policy: ctx-1/tpl-2
+digest: 19b6fbc01669bb9d
 total_tokens: 1311
 truncated: false
 

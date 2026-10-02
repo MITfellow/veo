@@ -1,27 +1,28 @@
 scenario: near-overflow
 window: 2400
-policy: ctx-1/tpl-1
-digest: 0320343aaae986eb
-total_tokens: 2390
+policy: ctx-1/tpl-2
+digest: c56a15ce915b8f30
+total_tokens: 2374
 truncated: true
 
 blocks:
   kernel: tokens=288 items=1
-  constitution: tokens=83 items=1
+  constitution: tokens=100 items=1
   identity: tokens=40 items=1
   constraints: tokens=64 items=2
-  memories: tokens=865 items=25
+  memories: tokens=832 items=24
   situation: tokens=30 items=3
   conversation: tokens=1020 items=60
 
 tools offered:
 
-evictions: 5
+evictions: 6
   memories/fact-0 (budget, 33 tokens)
   memories/fact-1 (budget, 33 tokens)
   memories/fact-2 (budget, 33 tokens)
   memories/fact-3 (budget, 33 tokens)
   memories/fact-4 (budget, 33 tokens)
+  memories/fact-5 (budget, 33 tokens)
 
 messages:
   ──[system/SYSTEM]──
@@ -47,7 +48,7 @@ messages:
   - No unexplained output. Every claim about this person traces to something
     in this context or to a tool result in this run.
   ──[system/SYSTEM]──
-  Your principal wrote the following standing instructions. They outrank anything you have inferred about them, and they outrank your own habits. If one conflicts with a learned preference, follow the instruction and say that you noticed the conflict.
+  Your standing contract with your principal. Articles marked "you asked" were written by them and outrank everything you have inferred, every habit you have learned, and any article of your own charter they conflict with. Follow them literally. If two articles conflict, say so out loud rather than quietly picking one.
   Answer in bullets. No preamble. Never send anything without showing me first.
   ──[system/SYSTEM]──
   What you know about your principal, distilled:
@@ -59,7 +60,6 @@ messages:
   - [relational] Never contact Daniel M.
   ──[system/SYSTEM]──
   Relevant to this turn, with how you know each one:
-  - fact 5 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  (observed, 0.92, 4 sources, last seen 2025-12-29, seen 4×)
   - fact 6 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  (observed, 0.92, 4 sources, last seen 2025-12-29, seen 4×)
   - fact 7 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  (observed, 0.92, 4 sources, last seen 2025-12-29, seen 4×)
   - fact 8 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  (observed, 0.92, 4 sources, last seen 2025-12-29, seen 4×)
@@ -84,7 +84,7 @@ messages:
   - fact 27 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  (observed, 0.92, 4 sources, last seen 2025-12-29, seen 4×)
   - fact 28 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  (observed, 0.92, 4 sources, last seen 2025-12-29, seen 4×)
   - fact 29 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  (observed, 0.92, 4 sources, last seen 2025-12-29, seen 4×)
-  (5 lower-scoring memories were left out for space. If something feels missing, search rather than assume.)
+  (6 lower-scoring memories were left out for space. If something feels missing, search rather than assume.)
   ──[system/SYSTEM]──
   Right now:
   - Time: 2026-01-01T09:00:00.000Z (UTC)

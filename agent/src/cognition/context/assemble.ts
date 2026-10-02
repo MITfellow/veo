@@ -385,6 +385,7 @@ export function emptySnapshot(now: number): StateSnapshot {
   return {
     kernel: '',
     constitution: '',
+    constitutionDoc: null,
     identity: null,
     constraints: [],
     situation: {

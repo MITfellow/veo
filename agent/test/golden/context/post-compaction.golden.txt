@@ -1,7 +1,7 @@
 scenario: post-compaction
 window: 4000
-policy: ctx-1/tpl-1
-digest: ba8e01157419771a
+policy: ctx-1/tpl-2
+digest: ac73ec3e22998cdd
 total_tokens: 686
 truncated: false
 

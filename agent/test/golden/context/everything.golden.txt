@@ -1,13 +1,13 @@
 scenario: everything
 window: 4000
-policy: ctx-1/tpl-1
-digest: 7bac6ceae120a4b1
-total_tokens: 1211
+policy: ctx-1/tpl-2
+digest: f6bfa7a9c1d0054b
+total_tokens: 1228
 truncated: false
 
 blocks:
   kernel: tokens=288 items=1
-  constitution: tokens=80 items=1
+  constitution: tokens=97 items=1
   identity: tokens=41 items=1
   constraints: tokens=64 items=2
   calibration: tokens=45 items=1
@@ -51,7 +51,7 @@ messages:
   - No unexplained output. Every claim about this person traces to something
     in this context or to a tool result in this run.
   ──[system/SYSTEM]──
-  Your principal wrote the following standing instructions. They outrank anything you have inferred about them, and they outrank your own habits. If one conflicts with a learned preference, follow the instruction and say that you noticed the conflict.
+  Your standing contract with your principal. Articles marked "you asked" were written by them and outrank everything you have inferred, every habit you have learned, and any article of your own charter they conflict with. Follow them literally. If two articles conflict, say so out loud rather than quietly picking one.
   Bullets. No preamble. Ask before sending anything to a work contact.
   ──[system/SYSTEM]──
   What you know about your principal, distilled:

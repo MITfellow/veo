@@ -45,9 +45,41 @@ export interface ModelToolSpec {
   parameters: unknown;
 }
 
+/**
+ * What the constitution's checks need to know about the run this request
+ * belongs to (§25, M7).
+ *
+ * It lives on the request, down here at L1, for one reason: the governance
+ * gate wraps the *provider*, so it sees requests and nothing else. Hanging
+ * this off a mutable per-run registry instead would break the moment two
+ * runs streamed at once, and passing it out-of-band would give the gate a
+ * second way to be bypassed. Adapters ignore it — they map named fields onto
+ * their wire format — so no provider ever sees it.
+ *
+ * It is plain data, not a handle: a check may read what happened, never act.
+ */
+export interface GovernanceHints {
+  runId: string;
+  stepId: string;
+  userMessage: string;
+  previousAgentTurn: string;
+  toolsCompleted: readonly string[];
+  effectsCommitted: readonly string[];
+  recalled: readonly { id: string; label: string; confidence: number }[];
+  contradicting: readonly { id: string; label: string }[];
+  factCount: number;
+  hasIdentityCard: boolean;
+  constraints: readonly { id: string; text: string }[];
+  foreign: readonly string[];
+  trust: TrustLevel;
+  modelConfigured: boolean;
+}
+
 export interface ModelRequest {
   model: string;
   messages: ModelMessage[];
+  /** Governance context for the constitution gate (§25). Never sent to a provider. */
+  governance?: GovernanceHints;
   /** Absent in M2 — tools are registered at M3. */
   tools?: ModelToolSpec[];
   maxOutputTokens?: number;

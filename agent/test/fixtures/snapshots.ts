@@ -10,6 +10,8 @@
  * Everything is deterministic: fixed timestamps, no randomness, no clock.
  */
 import { emptySnapshot } from '../../src/cognition/context/assemble.js';
+import { FOUNDING_ARTICLES } from '../../src/cognition/constitution/founding.js';
+import type { ConstitutionView } from '../../src/cognition/constitution/render.js';
 import type {
   CompactedChunk,
   Constraint,
@@ -98,9 +100,91 @@ export function compacted(overrides: Partial<CompactedChunk['summary']> = {}): C
   };
 }
 
+/**
+ * The founding charter as a context view (M7).
+ *
+ * Hash is fixed rather than computed so the golden file does not churn
+ * every time an article's wording is tidied — the *text* of the articles is
+ * what the golden is evidence of, and that text is right there in the file.
+ */
+export function constitutionView(
+  overrides: Partial<ConstitutionView> = {},
+): ConstitutionView {
+  return {
+    version: 1,
+    hash: 'goldenhash000001',
+    articles: FOUNDING_ARTICLES.map((a) => ({
+      id: a.id,
+      text: a.text,
+      origin: a.origin,
+      enforcement: a.enforcement,
+    })),
+    ...overrides,
+  };
+}
+
 /* ───────────────────────── the twelve scenarios ─────────────────────────── */
 
 export const SCENARIOS: Record<string, () => StateSnapshot> = {
+  /**
+   * 13. The constitution as shipped: the agent's own founding charter, cold.
+   * This golden is the one place the exact words the model is given every
+   * single turn are checked in and reviewable.
+   */
+  'constitution-default': () =>
+    snap({
+      constitutionDoc: constitutionView(),
+      conversation: [{ role: 'user', content: 'What are your rules?', trust: 'USER', id: 'turn-000' }],
+    }),
+
+  /**
+   * 14. One user article overriding a founding one. The overridden default
+   * still renders, marked — the model is told the rule existed and was
+   * deliberately overruled, which reads very differently from its absence.
+   */
+  'constitution-amended': () =>
+    snap({
+      constitutionDoc: constitutionView({
+        version: 4,
+        hash: 'goldenhash000004',
+        articles: [
+          {
+            id: 'U-tone',
+            text: 'Open warmly. A sentence of pleasantry before the answer is fine.',
+            origin: 'user',
+            enforcement: 'advisory',
+          },
+          ...FOUNDING_ARTICLES.map((a) => ({
+            id: a.id,
+            text: a.text,
+            origin: a.origin,
+            enforcement: a.enforcement,
+            ...(a.id === 'F7' ? { supersededBy: 'U-tone' } : {}),
+          })),
+        ],
+      }),
+      conversation: [{ role: 'user', content: 'morning!', trust: 'USER', id: 'turn-000' }],
+    }),
+
+  /**
+   * 15. §24.4: a thin profile, honestly. The identity block refuses to
+   * pretend and the calibration block says what is unknown.
+   */
+  'cold-start-honest': () =>
+    snap({
+      constitutionDoc: constitutionView(),
+      identity: null,
+      profile: { factCount: 2, meanConfidence: 0.4, sessionsObserved: 1 },
+      calibration: [
+        { id: 'q-1', question: 'Where do they actually live?', aboutFactId: null },
+        { id: 'q-2', question: 'Is Priya a colleague or a friend?', aboutFactId: 'fact-9' },
+      ],
+      memories: [
+        memory({ id: 'fact-9', text: 'mentioned someone called Priya', basis: 'observed', confidence: 0.35, sourceCount: 1 }),
+      ],
+      conversation: [{ role: 'user', content: 'what do you know about me?', trust: 'USER', id: 'turn-000' }],
+    }),
+
   /** 1. A brand-new user. Nothing is known and the context must say so. */
   'cold-start': () =>
     snap({

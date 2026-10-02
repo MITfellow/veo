@@ -33,6 +33,11 @@ import { MemoryService } from './cognition/memory/service.js';
 import { HashEmbedder } from './providers/fake-embedder.js';
 import { Runner } from './orchestration/runner.js';
 import { Api } from './interface/http.js';
+import { ConstitutionStore } from './cognition/constitution/store.js';
+import { viewOf } from './cognition/constitution/render.js';
+import { AskBudget } from './cognition/calibration/probe.js';
+import { BiasAuditor } from './cognition/calibration/audit.js';
+import { GovernedProvider } from './orchestration/governed-model.js';
 import { OfflineProvider } from './providers/offline.js';
 import { OpenAiCompatibleProvider } from './providers/openai-compatible.js';
 import { DiskFileStore } from './adapters/files.js';
@@ -65,7 +70,7 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
 
   /* ── L4/L5: the model ──────────────────────────────────────────────────── */
   const apiKey = process.env.ARISH_API_KEY;
-  const model: ModelProvider =
+  const rawModel: ModelProvider =
     apiKey === undefined || apiKey === ''
       ? new OfflineProvider()
       : new OpenAiCompatibleProvider({
@@ -76,6 +81,52 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
             : { baseUrl: process.env.ARISH_BASE_URL }),
           pricing: { inputPerMillion: 0.15, outputPerMillion: 0.6 },
         });
+
+  /* ── L4: the constitution (M7) ─────────────────────────────────────────── */
+  // Built before the model is wrapped and before anything can run, because
+  // the gate below refuses every model call that does not carry it. On a
+  // fresh install this ratifies the founding charter as version 1, through
+  // the same event path a user amendment takes (§25).
+  const constitution = new ConstitutionStore({ storage, events, clock, ids });
+  constitution.ensureFounding(PRINCIPAL);
+
+  const askBudget = new AskBudget({ storage, events, clock, ids });
+  const auditor = new BiasAuditor({ storage, events, clock, ids });
+
+  /**
+   * Every model in this process goes through here. Not "the provider we
+   * ship" — the port. Swapping providers by config (§34.4) cannot swap the
+   * behavioural contract out with them, and a future code path that reaches
+   * a model without an assembled context fails loudly instead of running an
+   * ungoverned agent.
+   */
+  const governedModel = new GovernedProvider({
+    inner: rawModel,
+    constitution: () => constitution.current(),
+    onJudgment: (judgment, meta) => {
+      events.append({
+        type: 'constitution.enforced',
+        principal: PRINCIPAL,
+        trust: 'SYSTEM',
+        runId: meta.runId === '' ? null : meta.runId,
+        stepId: meta.stepId === '' ? null : meta.stepId,
+        payload: {
+          runId: meta.runId,
+          stepId: meta.stepId,
+          version: meta.version,
+          hash: meta.hash,
+          verdicts: judgment.verdicts.map((v) => ({
+            articleId: v.articleId,
+            check: v.check,
+            verdict: v.verdict,
+            detail: v.detail,
+          })),
+          remedy: meta.remedyApplied,
+          buffered: meta.buffered,
+        },
+      });
+    },
+  });
 
   /* ── L3: capability ────────────────────────────────────────────────────── */
   const approvals = new ApprovalStore(storage, events, clock, ids);
@@ -129,6 +180,9 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
     clock,
     compactor,
     memory: memory.source,
+    // A function, not a value: the user can amend the contract between two
+    // turns of one session, and a captured copy would render yesterday's.
+    constitutionDoc: () => viewOf(constitution.current()),
     // Block 13 of the context is the tool list, filtered by trust. The
     // registry is the only place tool names exist (invariant 9), so the
     // snapshot reads them from it rather than keeping a second list that
@@ -149,7 +203,8 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
     clock,
     ids,
     logger,
-    model: model as never,
+    model: governedModel as never,
+    modelConfigured: apiKey !== undefined && apiKey !== '',
     invoker,
     approvals,
     suspensions,
@@ -178,6 +233,11 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
     // §22.8's user-control routes. Mandatory, not optional: a store nobody
     // can inspect is a store nobody should accept.
     memory,
+    // §25's user-facing surface: read the contract, amend it, see what it
+    // caught. A constitution nobody can read is a prompt with extra steps.
+    constitution,
+    askBudget,
+    auditor,
   });
 
   const server = api.server();
@@ -188,7 +248,7 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
   logger.info('agent listening', {
     port: actualPort,
     db,
-    model: model.id,
+    model: rawModel.id,
     // Never the token itself. It is printed once, to the operator's
     // terminal, by the caller — not written to a log file that gets shipped.
     offline: apiKey === undefined || apiKey === '',

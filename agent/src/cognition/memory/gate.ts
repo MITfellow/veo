@@ -74,7 +74,7 @@ const TRANSIENT_PHRASES = [
  * not, which is a rule about provenance rather than about topic, and
  * provenance is the thing the system can actually verify.
  */
-const PROTECTED_PREDICATES = new Set([
+export const PROTECTED_PREDICATES = new Set([
   'race',
   'ethnicity',
   'religion',

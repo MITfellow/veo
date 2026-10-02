@@ -57,6 +57,80 @@ export interface MemoryFilter {
   pinned?: boolean;
 }
 
+/* ─────────────────────────── §25: the constitution ──────────────────────── */
+
+export interface ConstitutionArticle {
+  id: string;
+  text: string;
+  origin: 'founding' | 'user' | 'proposed';
+  kind: string;
+  /** How the article is kept: said, screened, or enforced in code elsewhere. */
+  enforcement: 'advisory' | 'checked' | 'structural';
+  check: string | null;
+  /** What the check cannot see. Shown in the UI; honesty is the point. */
+  checkMisses: string | null;
+  checkDescribes: string | null;
+  remedy: string;
+  enforcedBy: string;
+  entrenched: boolean;
+  subject: string;
+  stance: string;
+  cites: string;
+  supersededBy: string | null;
+  addedVersion: number;
+}
+
+export interface ConstitutionDoc {
+  version: number;
+  hash: string;
+  ratifiedAt: number;
+  articles: ConstitutionArticle[];
+  conflicts: Array<{ winner: string; loser: string; subject: string; reason: string }>;
+  proposals: Array<{ id: string; article: ConstitutionArticle; rationale: string }>;
+}
+
+export interface Amendment {
+  version: number;
+  hash: string;
+  at: number;
+  change: string;
+  articleId: string;
+  author: string;
+}
+
+export interface Compliance {
+  windowDays: number;
+  articles: Array<{
+    articleId: string;
+    check: string;
+    upheld: number;
+    violated: number;
+    unverifiable: number;
+  }>;
+  recentViolations: Array<{ at: number; article_id: string; detail: string; remedy: string }>;
+}
+
+export interface CalibrationView {
+  calibration: {
+    brier: number;
+    resolved: number;
+    unresolved: number;
+    meaningful: boolean;
+    withinThreshold: boolean;
+    buckets: Array<{ from: number; to: number; count: number; predicted: number; observed: number }>;
+  };
+  probes: { budget: { perDay: number; perSession: number }; askedToday: number; pending: number; declined: number; unresolvable: number };
+  bias: {
+    agreementRate: number;
+    positionFlipRate: number;
+    sourceDiversity: number;
+    staleness: number;
+    protectedAttributeHits: string[];
+    regressions: string[];
+    turns: number;
+  };
+}
+
 export interface AgentSession {
   id: string;
   title: string | null;
@@ -201,6 +275,43 @@ export const agent = {
 
   async exportMemory(): Promise<unknown> {
     return call('/memory/export');
+  },
+
+  /* ──────────────────────── §25: the constitution ──────────────────────── */
+
+  async constitution(): Promise<ConstitutionDoc> {
+    return call('/constitution');
+  },
+
+  async constitutionHistory(): Promise<{ history: Amendment[] }> {
+    return call('/constitution/history');
+  },
+
+  async addArticle(text: string, subject = 'general'): Promise<{ version: number }> {
+    return call('/constitution/articles', {
+      method: 'POST',
+      body: JSON.stringify({ text, subject }),
+    });
+  },
+
+  async repealArticle(id: string): Promise<void> {
+    await call(`/constitution/articles/${id}`, { method: 'DELETE' });
+  },
+
+  async dismissProposal(id: string): Promise<void> {
+    await call(`/constitution/proposals/${id}/dismiss`, { method: 'POST' });
+  },
+
+  async ratifyProposal(id: string): Promise<void> {
+    await call(`/constitution/proposals/${id}/ratify`, { method: 'POST' });
+  },
+
+  async compliance(days = 14): Promise<Compliance> {
+    return call(`/constitution/compliance?days=${days}`);
+  },
+
+  async calibration(): Promise<CalibrationView> {
+    return call('/calibration');
   },
 
   async approvals(): Promise<PendingApproval[]> {

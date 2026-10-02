@@ -6,6 +6,12 @@
  */
 import { IDENTITY_CARD_MAX_TOKENS } from '../types.js';
 import type { Template, RenderedItem } from './index.js';
+import {
+  CONSTITUTION_HEADER,
+  articleLine,
+  sentinelFor,
+  structuralSummary,
+} from '../../constitution/render.js';
 
 /**
  * Block 1 — kernel instructions.
@@ -60,16 +66,36 @@ export const KERNEL: Template = {
  */
 export const CONSTITUTION: Template = {
   name: 'constitution',
-  version: 'constitution-1',
+  version: 'constitution-2',
   kind: 'system',
-  header:
-    'Your principal wrote the following standing instructions. They outrank ' +
-    'anything you have inferred about them, and they outrank your own habits. ' +
-    'If one conflicts with a learned preference, follow the instruction and say ' +
-    'that you noticed the conflict.',
+  header: CONSTITUTION_HEADER,
   render(snapshot) {
-    const text = snapshot.constitution.trim();
-    return text === '' ? [] : [{ id: 'constitution', text }];
+    const doc = snapshot.constitutionDoc;
+    if (doc === null) {
+      // Pre-M7 fixtures and any caller that still carries a free-text
+      // contract. Rendered, but *not* given a sentinel: a free-text
+      // constitution cannot be hashed against a document that does not
+      // exist, and `GovernedProvider` will refuse the call. That refusal is
+      // the point — it is how the old path gets found and migrated.
+      const text = snapshot.constitution.trim();
+      return text === '' ? [] : [{ id: 'constitution', text }];
+    }
+
+    // The sentinel is item zero and is never evicted independently of the
+    // block: if the block renders at all, the proof that it rendered goes
+    // with it.
+    const items: RenderedItem[] = [{ id: 'constitution:sentinel', text: sentinelFor(doc) }];
+    const structural = doc.articles.filter((a) => a.enforcement === 'structural');
+    for (const article of doc.articles) {
+      if (article.enforcement === 'structural') continue;
+      items.push({ id: `constitution:${article.id}`, text: articleLine(article) });
+    }
+    // One line for everything the code already enforces. They stay in the
+    // sentinel, so a trace still proves they were in force.
+    if (structural.length > 0) {
+      items.push({ id: 'constitution:structural', text: structuralSummary(structural) });
+    }
+    return items;
   },
 };
 

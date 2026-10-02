@@ -371,6 +371,110 @@ const CalibrationAnswered = z.object({
   answer: z.enum(['confirmed', 'corrected', 'declined', 'unknown']),
 });
 
+/**
+ * §25's constitution, as events (decision 030).
+ *
+ * §25 is one sentence long on this point and it is the load-bearing one:
+ * "Every change to either is an event, so 'the agent started talking
+ * differently on this date, because of this' is always answerable." A
+ * document stored as a row that gets UPDATEd cannot answer it. So the
+ * document is a projection and these five types are the only way it moves.
+ *
+ * `constitution.enforced` is the odd one out: it is not a change to the
+ * document, it is a reading of the document against one model response. It
+ * lives here rather than under `model.*` because the question it answers —
+ * "which articles were in force, and did the output honour them?" — is about
+ * the contract, not about the provider.
+ */
+const ConstitutionArticleRecord = z.object({
+  id: z.string().min(1),
+  text: z.string().min(1),
+  origin: z.enum(['founding', 'user', 'proposed']),
+  kind: z.enum(['directive', 'prohibition', 'disclosure', 'style']),
+  enforcement: z.enum(['advisory', 'checked', 'structural']),
+  check: z.string().nullable().default(null),
+  remedy: z.enum(['annotate', 'revise', 'block', 'none']).default('none'),
+  /** For `structural` articles: the module that actually enforces this. */
+  enforcedBy: z.string().default(''),
+  entrenched: z.boolean().default(false),
+  subject: z.string().default('general'),
+  stance: z.enum(['require', 'forbid', 'prefer']).default('require'),
+  cites: z.string().default(''),
+});
+
+const ConstitutionRatified = z.object({
+  version: z.number().int().positive(),
+  hash: z.string(),
+  articles: z.array(ConstitutionArticleRecord).min(1),
+  reason: z.string().default('founding charter'),
+});
+
+const ConstitutionAmended = z.object({
+  version: z.number().int().positive(),
+  hash: z.string(),
+  change: z.enum(['added', 'edited', 'repealed', 'reordered']),
+  articleId: z.string().min(1),
+  /** The article as it was. Null for `added`. */
+  before: ConstitutionArticleRecord.nullable().default(null),
+  /** The article as it now is. Null for `repealed`. */
+  after: ConstitutionArticleRecord.nullable().default(null),
+  author: z.string().min(1),
+});
+
+const ConstitutionProposed = z.object({
+  proposalId: z.string().min(1),
+  article: ConstitutionArticleRecord,
+  rationale: z.string(),
+  /** What made the agent think of it — a rule id, usually. */
+  derivedFrom: z.string().default(''),
+});
+
+const ConstitutionDismissed = z.object({
+  proposalId: z.string().min(1),
+  /** Hash of the proposed text, so the same body cannot come back. */
+  bodyHash: z.string().min(1),
+  reason: z.string().default('dismissed by principal'),
+});
+
+const ConstitutionEnforced = z.object({
+  runId: z.string(),
+  stepId: z.string().default(''),
+  version: z.number().int().nonnegative(),
+  hash: z.string(),
+  verdicts: z.array(
+    z.object({
+      articleId: z.string(),
+      check: z.string(),
+      verdict: z.enum(['upheld', 'violated', 'unverifiable']),
+      detail: z.string().default(''),
+    }),
+  ),
+  remedy: z.enum(['none', 'annotate', 'revise', 'block']).default('none'),
+  /** True when a blocking article forced the stream to be buffered (§2.4). */
+  buffered: z.boolean().default(false),
+});
+
+/** §24.1: the Brier score of everything that has actually been resolved. */
+const CalibrationScored = z.object({
+  brier: z.number(),
+  resolved: z.number().int().nonnegative(),
+  unresolved: z.number().int().nonnegative(),
+  withinThreshold: z.boolean(),
+  windowFrom: z.number().int().nonnegative(),
+  windowTo: z.number().int().nonnegative(),
+});
+
+/** §24.3: the five metrics, computed in consolidation. */
+const BiasAudited = z.object({
+  agreementRate: z.number(),
+  positionFlipRate: z.number(),
+  sourceDiversity: z.number(),
+  protectedAttributeHits: z.array(z.string()).default([]),
+  staleness: z.number(),
+  turns: z.number().int().nonnegative(),
+  regressions: z.array(z.string()).default([]),
+});
+
 const ErrorRaised = z.object({ kind: z.string(), message: z.string(), fatal: z.boolean() });
 
 /** Entity graph writes are their own events so the graph is rebuildable. */
@@ -462,6 +566,14 @@ export const EVENT_SCHEMAS = {
 
   'calibration.probed': CalibrationProbed,
   'calibration.answered': CalibrationAnswered,
+  'calibration.scored': CalibrationScored,
+  'bias.audited': BiasAudited,
+
+  'constitution.ratified': ConstitutionRatified,
+  'constitution.amended': ConstitutionAmended,
+  'constitution.proposed': ConstitutionProposed,
+  'constitution.dismissed': ConstitutionDismissed,
+  'constitution.enforced': ConstitutionEnforced,
 
   'error.raised': ErrorRaised,
 } as const;

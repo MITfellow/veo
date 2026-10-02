@@ -1,7 +1,7 @@
 scenario: constraints
 window: 4000
-policy: ctx-1/tpl-1
-digest: bbb3bbf0b83a9c46
+policy: ctx-1/tpl-2
+digest: e06cb537c9fb0091
 total_tokens: 608
 truncated: false
 

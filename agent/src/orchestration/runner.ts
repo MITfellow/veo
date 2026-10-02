@@ -38,6 +38,7 @@ import {
   emptyTotals,
   type ModelChunk,
   type ModelRequest,
+  type GovernanceHints,
   ModelProtocolError,
   type StreamTotals,
   type ToolCall,
@@ -155,6 +156,12 @@ export interface RunnerDeps {
    * here are logged and dropped — memory is not allowed to break answering.
    */
   observer?: RunObserver;
+  /**
+   * Whether a real language model is configured. Fed to the constitution's
+   * checks (§24.4): "answered confidently with no grounding" is a finding
+   * about a model, and the offline provider's canned refusal is not one.
+   */
+  modelConfigured?: boolean;
   /**
    * Turn the untrusted-content fence OFF. Adversarial testing only (§33).
    * Production leaves it on; the point of the switch is to prove nothing
@@ -455,9 +462,43 @@ export class Runner {
           correlationId: runId,
         });
 
+        // §25: what the constitution's checks are allowed to know about this
+        // step. Assembled here, from the same snapshot the context came
+        // from, and carried *on the request* — the governance gate wraps the
+        // provider, so the request is the only thing it can see, and an
+        // out-of-band channel would be a second way to reach a model
+        // ungoverned.
+        const snapshot = gathered.snapshot;
+        const governance: GovernanceHints = {
+          runId,
+          stepId,
+          userMessage: [...snapshot.conversation].reverse().find((t) => t.role === 'user')?.content ?? '',
+          previousAgentTurn:
+            [...snapshot.conversation].reverse().find((t) => t.role === 'assistant')?.content ?? '',
+          toolsCompleted: observations.filter((o) => o.ok).map((o) => o.tool),
+          // Committed external effects are not threaded through the runner
+          // yet (M8 owns the outbox read model); the action-claim check
+          // falls back to tool names, which is weaker and is listed as such
+          // in M7.md rather than papered over.
+          effectsCommitted: [],
+          recalled: snapshot.memories.map((m) => ({
+            id: m.id,
+            label: m.text,
+            confidence: m.confidence,
+          })),
+          contradicting: [],
+          factCount: snapshot.profile.factCount,
+          hasIdentityCard: snapshot.identity !== null,
+          constraints: snapshot.constraints.map((c) => ({ id: c.id, text: c.text })),
+          foreign: snapshot.foreign.map((f) => f.text),
+          trust: effectiveTrust,
+          modelConfigured: this.deps.modelConfigured ?? true,
+        };
+
         const modelRequest: ModelRequest = {
           model: model.id,
           messages: context.messages,
+          governance,
           ...(context.tools.length > 0 ? { tools: context.tools } : {}),
           maxOutputTokens: Math.min(limits.maxTokens - caps.tokens, 4096),
         };

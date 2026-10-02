@@ -96,6 +96,14 @@ export interface StateSnapshot {
   kernel: string;
   /** The user-editable behavioural contract (§25). Empty string if unset. */
   constitution: string;
+  /**
+   * The structured constitution (§25, M7). When present it replaces the
+   * free-text field above: articles render individually with their ids, so a
+   * trace can say *which* article was in front of the model, and the block's
+   * sentinel line is what `GovernedProvider` checks before any model call.
+   * `null` only in fixtures predating M7.
+   */
+  constitutionDoc: import('../constitution/render.js').ConstitutionView | null;
   /** The distilled person (§22.7). `null` before consolidation has ever run. */
   identity: IdentityCard | null;
   constraints: readonly Constraint[];

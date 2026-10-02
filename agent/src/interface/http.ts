@@ -19,6 +19,12 @@ import type { ApprovalScope, ApprovalStore } from '../capability/approvals.js';
 import type { Redactor } from '../substrate/events/redact.js';
 import { SseConnection, parseLastEventId, replayRun, toFrame } from './stream.js';
 import type { MemoryService } from '../cognition/memory/service.js';
+import type { ConstitutionStore } from '../cognition/constitution/store.js';
+import { EntrenchedArticleError } from '../cognition/constitution/types.js';
+import { CHECKS } from '../cognition/constitution/checks.js';
+import type { AskBudget } from '../cognition/calibration/probe.js';
+import type { BiasAuditor } from '../cognition/calibration/audit.js';
+import { report as calibrationReport } from '../cognition/calibration/confidence.js';
 import { factLine } from '../cognition/memory/store.js';
 import type { Fact } from '../cognition/memory/types.js';
 
@@ -47,6 +53,16 @@ export interface ApiDeps {
    * routes 404 rather than pretending the agent has no memory.
    */
   memory?: MemoryService;
+  /**
+   * §25's constitution. Omitted means the routes 404 — but `main.ts` always
+   * passes it: an agent whose contract the user cannot read is exactly the
+   * "prompt in a textarea" this milestone exists to replace.
+   */
+  constitution?: ConstitutionStore;
+  /** §24.2's ask budget, for the calibration panel. */
+  askBudget?: AskBudget;
+  /** §24.3's bias audit. */
+  auditor?: BiasAuditor;
 }
 
 /** §29: `{ decision, scope }`. Validated like every other boundary. */
@@ -609,6 +625,196 @@ export class Api {
       const targets = memory.store.bySubject(subject, { includeInactive: true });
       for (const fact of targets) memory.store.forget(fact.id, reason, principal, 'USER');
       json(res, 200, { forgotten: targets.map((fact) => fact.id), shredded: true });
+    });
+
+    /* ──────────────────── §25 — the constitution ──────────────────────── */
+
+    // The document is the agent's terms of employment, and §25's promise is
+    // that every change to it is answerable. These routes are how a person
+    // reads those terms, rewrites them, and sees what they caught — without
+    // having to ask the agent, whose account of its own rules is exactly the
+    // thing that should not be load-bearing.
+
+    const constitution = this.deps.constitution;
+
+    this.add('GET', '/constitution', ({ res }) => {
+      if (constitution === undefined) return json(res, 404, { error: 'no_constitution' });
+      const doc = constitution.current();
+      json(res, 200, {
+        version: doc.version,
+        hash: doc.hash,
+        ratifiedAt: doc.ratifiedAt,
+        articles: doc.live.map((a) => ({
+          id: a.id,
+          text: a.text,
+          origin: a.origin,
+          kind: a.kind,
+          enforcement: a.enforcement,
+          check: a.check,
+          checkDescribes: a.check === null ? null : (CHECKS[a.check]?.describes ?? null),
+          checkMisses: a.check === null ? null : (CHECKS[a.check]?.misses ?? null),
+          remedy: a.remedy,
+          enforcedBy: a.enforcedBy,
+          entrenched: a.entrenched,
+          subject: a.subject,
+          stance: a.stance,
+          cites: a.cites,
+          supersededBy: a.supersededBy ?? null,
+          addedVersion: a.addedVersion,
+        })),
+        conflicts: doc.conflicts,
+        proposals: constitution.proposals('pending'),
+      });
+    });
+
+    this.add('GET', '/constitution/history', ({ res }) => {
+      if (constitution === undefined) return json(res, 404, { error: 'no_constitution' });
+      json(res, 200, { history: constitution.history(200) });
+    });
+
+    this.add('POST', '/constitution/articles', async ({ res, body, principal }) => {
+      if (constitution === undefined) return json(res, 404, { error: 'no_constitution' });
+      const input = (await body()) as Record<string, unknown> | null;
+      const text = typeof input?.text === 'string' ? input.text.trim() : '';
+      if (text === '') return json(res, 400, { error: 'bad_request', detail: 'text is required' });
+      try {
+        const doc = constitution.adopt(principal, {
+          ...(typeof input?.id === 'string' ? { id: input.id } : {}),
+          text,
+          origin: 'user',
+          kind: (input?.kind as 'directive') ?? 'directive',
+          enforcement: 'advisory',
+          subject: typeof input?.subject === 'string' ? input.subject : 'general',
+          stance: (input?.stance as 'require') ?? 'require',
+          cites: 'written by the principal',
+        });
+        json(res, 201, { version: doc.version, hash: doc.hash, conflicts: doc.conflicts });
+      } catch (error) {
+        if (error instanceof EntrenchedArticleError) {
+          return json(res, 409, { error: 'entrenched', article: error.articleId, cites: error.cites, detail: error.message });
+        }
+        throw error;
+      }
+    });
+
+    this.add('PUT', '/constitution', async ({ res, body, principal }) => {
+      if (constitution === undefined) return json(res, 404, { error: 'no_constitution' });
+      const input = (await body()) as { articles?: { id?: string; text?: string; subject?: string }[] } | null;
+      const articles = (input?.articles ?? [])
+        .filter((a): a is { id?: string; text: string; subject?: string } => typeof a.text === 'string' && a.text.trim() !== '')
+        .map((a) => ({
+          ...(a.id === undefined ? {} : { id: a.id }),
+          text: a.text.trim(),
+          origin: 'user' as const,
+          kind: 'directive' as const,
+          enforcement: 'advisory' as const,
+          subject: a.subject ?? 'general',
+          cites: 'written by the principal',
+        }));
+      const doc = constitution.replaceUserArticles(principal, articles);
+      json(res, 200, { version: doc.version, hash: doc.hash, conflicts: doc.conflicts });
+    });
+
+    this.add('DELETE', '/constitution/articles/:id', ({ res, params, principal }) => {
+      if (constitution === undefined) return json(res, 404, { error: 'no_constitution' });
+      try {
+        const doc = constitution.repeal(principal, params.id!);
+        json(res, 200, { version: doc.version, hash: doc.hash, repealed: params.id });
+      } catch (error) {
+        if (error instanceof EntrenchedArticleError) {
+          // 409, not 403: the request is not unauthorised, it is impossible.
+          // The article describes what the code does, and the code is not
+          // changing because a row changed.
+          return json(res, 409, { error: 'entrenched', article: error.articleId, cites: error.cites, detail: error.message });
+        }
+        return json(res, 404, { error: 'no_such_article', detail: String(error) });
+      }
+    });
+
+    this.add('POST', '/constitution/proposals/:id/dismiss', ({ res, params, principal }) => {
+      if (constitution === undefined) return json(res, 404, { error: 'no_constitution' });
+      try {
+        constitution.dismiss(principal, params.id!);
+        json(res, 200, { dismissed: params.id });
+      } catch {
+        json(res, 404, { error: 'no_such_proposal' });
+      }
+    });
+
+    this.add('POST', '/constitution/proposals/:id/ratify', ({ res, params, principal }) => {
+      if (constitution === undefined) return json(res, 404, { error: 'no_constitution' });
+      try {
+        const doc = constitution.ratifyProposal(principal, params.id!);
+        json(res, 200, { version: doc.version, hash: doc.hash });
+      } catch {
+        json(res, 404, { error: 'no_such_proposal' });
+      }
+    });
+
+    this.add('GET', '/constitution/compliance', ({ res, url }) => {
+      if (constitution === undefined) return json(res, 404, { error: 'no_constitution' });
+      const days = Number(url.searchParams.get('days') ?? '14');
+      const from = this.deps.clock.now() - days * 86_400_000;
+      const rows = this.deps.storage.all<{
+        article_id: string;
+        check_id: string;
+        verdict: string;
+        n: number;
+      }>(
+        `SELECT article_id, check_id, verdict, COUNT(*) AS n
+           FROM constitution_enforcements WHERE at >= ?
+          GROUP BY article_id, check_id, verdict`,
+        [from],
+      );
+      const byArticle = new Map<string, { articleId: string; check: string; upheld: number; violated: number; unverifiable: number }>();
+      for (const row of rows) {
+        const entry = byArticle.get(row.article_id) ?? {
+          articleId: row.article_id,
+          check: row.check_id,
+          upheld: 0,
+          violated: 0,
+          unverifiable: 0,
+        };
+        if (row.verdict === 'upheld') entry.upheld += row.n;
+        else if (row.verdict === 'violated') entry.violated += row.n;
+        else entry.unverifiable += row.n;
+        byArticle.set(row.article_id, entry);
+      }
+      const recent = this.deps.storage.all<{
+        at: number;
+        article_id: string;
+        detail: string;
+        remedy: string;
+      }>(
+        `SELECT at, article_id, detail, remedy FROM constitution_enforcements
+          WHERE verdict = 'violated' AND at >= ? ORDER BY at DESC LIMIT 20`,
+        [from],
+      );
+      json(res, 200, { windowDays: days, articles: [...byArticle.values()], recentViolations: recent });
+    });
+
+    /* ──────────────────── §24 — calibration and bias ──────────────────── */
+
+    this.add('GET', '/calibration', ({ res, url, principal }) => {
+      const askBudget = this.deps.askBudget;
+      const auditor = this.deps.auditor;
+      if (askBudget === undefined || auditor === undefined) {
+        return json(res, 404, { error: 'no_calibration' });
+      }
+      const days = Number(url.searchParams.get('days') ?? '30');
+      const from = this.deps.clock.now() - days * 86_400_000;
+      const resolutions = askBudget.resolutions(principal, from);
+      const state = askBudget.state(principal);
+      json(res, 200, {
+        calibration: calibrationReport(resolutions, state.pending, {
+          from,
+          to: this.deps.clock.now(),
+        }),
+        probes: state,
+        // `write: false` — reading the panel must not write an audit event,
+        // or the metrics would measure how often the user looked at them.
+        bias: auditor.run(principal, { write: false }),
+      });
     });
   }
 

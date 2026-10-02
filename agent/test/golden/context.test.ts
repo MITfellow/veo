@@ -44,6 +44,9 @@ const WINDOWS: Record<string, number> = {
   pinned: 2_000,
   constraints: 4_000,
   everything: 4_000,
+  'constitution-default': 4_000,
+  'constitution-amended': 4_000,
+  'cold-start-honest': 4_000,
 };
 
 const TRUST: Record<string, TrustLevel> = { 'foreign-present': 'DERIVED' };
@@ -101,8 +104,10 @@ describe('golden: assembled context (§21)', () => {
     });
   }
 
-  it('covers the scenarios §21 names', () => {
-    expect(Object.keys(SCENARIOS)).toHaveLength(12);
+  it("covers the scenarios §21 names, plus M7's three", () => {
+    // §21 asks for ~12; M7 adds the constitution as shipped, the
+    // constitution amended, and the honest cold start (§24.4).
+    expect(Object.keys(SCENARIOS)).toHaveLength(15);
   });
 
   it('is byte-stable across repeated assembly', () => {

@@ -1,7 +1,7 @@
 scenario: low-confidence
 window: 4000
-policy: ctx-1/tpl-1
-digest: eb76ddc52295df39
+policy: ctx-1/tpl-2
+digest: 3fd435c8c0d18394
 total_tokens: 663
 truncated: false
 
