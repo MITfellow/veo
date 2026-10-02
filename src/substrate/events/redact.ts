@@ -48,9 +48,40 @@ function sortedEntries(values: Map<string, string>): [string, string][] {
   return [...values.entries()].sort((a, b) => b[0].length - a[0].length);
 }
 
+/**
+ * The forms a secret takes on its way into a payload.
+ *
+ * Literal matching alone is not enough, and the adversarial fuzz proved it: a
+ * credential interpolated into a URL arrives percent-encoded and sails
+ * straight past a substring check. Same for a header block dumped as base64.
+ * Each registered value is therefore watched in every shape it plausibly
+ * wears by the time it reaches an event payload.
+ */
+function encodingsOf(value: string): string[] {
+  const forms = new Set<string>([value]);
+  try {
+    forms.add(encodeURIComponent(value));
+    forms.add(encodeURI(value));
+  } catch {
+    // Lone surrogates make encodeURIComponent throw; the literal still counts.
+  }
+  const b64 = Buffer.from(value, 'utf8').toString('base64');
+  if (b64.length >= 8) {
+    forms.add(b64);
+    forms.add(b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')); // base64url
+  }
+  // JSON escaping: a secret containing a quote or backslash looks different
+  // once it has been through JSON.stringify.
+  const jsonEscaped = JSON.stringify(value).slice(1, -1);
+  if (jsonEscaped !== value) forms.add(jsonEscaped);
+  return [...forms].filter((f) => f.length >= 8).sort((a, b) => b.length - a.length);
+}
+
 export class Redactor {
   /** value → label */
   private readonly values = new Map<string, string>();
+  /** value → every encoded form to watch for. Computed once at registration. */
+  private readonly encodingCache = new Map<string, string[]>();
   private readonly rules: RedactionRule[];
 
   constructor(rules: readonly RedactionRule[] = DEFAULT_PATTERNS) {
@@ -65,10 +96,12 @@ export class Redactor {
   register(value: string, label: string): void {
     if (value.length < 8) return;
     this.values.set(value, label);
+    this.encodingCache.set(value, encodingsOf(value));
   }
 
   unregister(value: string): void {
     this.values.delete(value);
+    this.encodingCache.delete(value);
   }
 
   addRule(rule: RedactionRule): void {
@@ -83,7 +116,9 @@ export class Redactor {
   redactString(input: string): string {
     let out = input;
     for (const [value, label] of sortedEntries(this.values)) {
-      if (out.includes(value)) out = out.split(value).join(placeholder(label));
+      for (const form of this.encodingCache.get(value) ?? [value]) {
+        if (out.includes(form)) out = out.split(form).join(placeholder(label));
+      }
     }
     for (const { label, pattern } of this.rules) {
       // Rules are module-level and `g`-flagged; reset lastIndex so a previous

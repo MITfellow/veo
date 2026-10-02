@@ -51,13 +51,18 @@ export function createSubstrate(options: SubstrateOptions = {}): Substrate {
   const clock = options.clock ?? new SystemClock();
   const hashing = new NodeHashing();
   const ids = options.ids ?? new UlidIds(clock);
-  const logger =
-    options.logger ??
-    new JsonLogger({}, { level: config.logging.level, clock, pretty: config.logging.pretty });
   const storage =
     options.storage ??
     new SqliteStorage({ path: options.dbPath ?? resolveDbPath(config) });
   const redactor = options.redactor ?? new Redactor();
+  // The logger is built *after* the redactor and wired to it: log lines are a
+  // leak surface just like event payloads (§13.2).
+  const logger =
+    options.logger ??
+    new JsonLogger(
+      {},
+      { level: config.logging.level, clock, pretty: config.logging.pretty, redactor },
+    );
 
   migrate(storage, (sql) => hashing.sha256Hex(sql), clock.now());
 

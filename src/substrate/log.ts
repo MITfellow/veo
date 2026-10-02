@@ -19,6 +19,17 @@ export interface JsonLoggerOptions {
   clock?: Clock;
   sink?: (line: string) => void;
   pretty?: boolean;
+  /**
+   * Applied to the fully serialized line, immediately before it is written.
+   *
+   * Logs are a surface (§13.2: a secret value never enters "a log line"), and
+   * the adversarial fuzz found this gap: the event log redacted faithfully
+   * while `logger.error('failed', { authorization: token })` wrote the token
+   * straight to stderr. Redacting the *serialized* line rather than each field
+   * is deliberate — a secret nested three levels into a `fields` object, used
+   * as a key, or embedded in a stack trace is all one string by that point.
+   */
+  redactor?: { redactString(input: string): string };
 }
 
 export class JsonLogger implements Logger {
@@ -65,7 +76,8 @@ export class JsonLogger implements Logger {
       ...this.fields,
       ...fields,
     };
-    this.sink(this.pretty ? prettyLine(record) : JSON.stringify(record));
+    const line = this.pretty ? prettyLine(record) : JSON.stringify(record);
+    this.sink(this.options.redactor ? this.options.redactor.redactString(line) : line);
   }
 }
 
