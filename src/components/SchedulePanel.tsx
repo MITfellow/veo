@@ -3,6 +3,7 @@ import {
   agent,
   AgentUnavailableError,
   type CatchUp,
+  type DeadLetterView,
   type DegradationView,
   type JobView,
   type ScheduleView,
@@ -62,6 +63,12 @@ export default function SchedulePanel({ onNotice }: { onNotice: (message: string
   const [jobs, setJobs] = useState<JobView[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [ladder, setLadder] = useState<DegradationView | null>(null);
+  /**
+   * The dead-letter list from `/jobs/dead-letter`, which carries the
+   * error and the death time that the plain jobs row does not — and is
+   * the only list `replay` accepts an id from.
+   */
+  const [dead, setDead] = useState<DeadLetterView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
@@ -72,17 +79,28 @@ export default function SchedulePanel({ onNotice }: { onNotice: (message: string
    * lets the effect below stay a plain promise handler. */
   const load = useCallback(
     async () =>
-      Promise.all([agent.schedules(), agent.jobs(), agent.degradation()]).then(
-        ([list, queue, degradation]) => ({ list, queue, degradation }),
-      ),
+      Promise.all([
+        agent.schedules(),
+        agent.jobs(),
+        agent.degradation(),
+        agent.deadLetters(),
+      ]).then(([list, queue, degradation, deadLetters]) => ({
+        list,
+        queue,
+        degradation,
+        deadLetters,
+      })),
     [],
   );
 
   const apply = useCallback((result: Awaited<ReturnType<typeof load>>) => {
     setSchedules(result.list.schedules);
-    setJobs(result.queue.jobs.filter((job) => job.status === 'dead' || job.status === 'failed'));
+    // Failed-but-not-dead: still has retries left, so it is a warning
+    // rather than a casualty. The dead ones come from their own route.
+    setJobs(result.queue.jobs.filter((job) => job.status === 'failed'));
     setCounts(result.queue.counts);
     setLadder(result.degradation);
+    setDead(result.deadLetters);
     setError(null);
   }, []);
 
@@ -149,7 +167,6 @@ export default function SchedulePanel({ onNotice }: { onNotice: (message: string
     );
   }
 
-  const dead = jobs.filter((job) => job.status === 'dead');
 
   return (
     <>
@@ -281,6 +298,13 @@ export default function SchedulePanel({ onNotice }: { onNotice: (message: string
         </button>
       )}
 
+      {jobs.length > 0 ? (
+        <div className="sch-note">
+          {jobs.length} job{jobs.length === 1 ? ' has' : 's have'} failed and will be retried with
+          a longer gap each time.
+        </div>
+      ) : null}
+
       {dead.length > 0 ? (
         <>
           <div className="sch-section">Gave up on</div>
@@ -288,14 +312,31 @@ export default function SchedulePanel({ onNotice }: { onNotice: (message: string
             These ran out of retries. They are kept rather than dropped — the agent failing silently
             is the one outcome worth preventing.
           </div>
-          {dead.map((job) => (
-            <div key={job.id} className="sch-row is-dead">
+          {dead.map((letter) => (
+            <div key={letter.id} className="sch-row is-dead">
               <div className="sch-main">
-                <div className="sch-name">{job.kind}</div>
-                <div className="sch-prompt">{job.lastError ?? 'no reason recorded'}</div>
+                <div className="sch-name">{letter.kind}</div>
+                <div className="sch-prompt">{letter.error === '' ? 'no reason recorded' : letter.error}</div>
                 <div className="sch-when">
-                  {job.attempts} of {job.maxAttempts} attempts used
+                  gave up after {letter.attempts} attempt{letter.attempts === 1 ? '' : 's'}
+                  {letter.replayedAt === null ? '' : ' · already put back once'}
                 </div>
+              </div>
+              <div className="sch-row-actions">
+                <button
+                  className="sch-btn"
+                  onClick={async () => {
+                    try {
+                      await agent.replayJob(letter.id);
+                      await refresh();
+                      onNotice('Back on the queue.');
+                    } catch (cause) {
+                      onNotice((cause as Error).message);
+                    }
+                  }}
+                >
+                  Try it again
+                </button>
               </div>
             </div>
           ))}

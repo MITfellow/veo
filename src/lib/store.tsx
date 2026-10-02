@@ -120,6 +120,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const timers = useRef<number[]>([]);
   const [online, setOnline] = useState(() => (typeof navigator === 'undefined' ? true : navigator.onLine));
   const [storageIssue, setStorageIssue] = useState<string | null>(null);
+  /** chatId → the agent run currently in flight for it. */
+  const [running, setRunning] = useState<Record<string, string>>({});
 
   useEffect(() => {
     const up = () => setOnline(true);
@@ -356,6 +358,20 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         dispatch({ type: 'status', id: outgoingId, status: 'delivered' });
         const { runId } = await agent.send(sessionId, text);
         dispatch({ type: 'typing', chatId, typing: true, by: AGENT_CONTACT.id });
+        // From here the run is interruptible, and the composer says so.
+        setRunning((current) => ({ ...current, [chatId]: runId }));
+
+        /** A system line in the transcript, where it stays. */
+        const note = (message: string) =>
+          dispatch({
+            type: 'push',
+            message: {
+              ...blank(newId(), chatId),
+              authorId: AGENT_CONTACT.id,
+              text: message,
+              system: true,
+            },
+          });
 
         let painted = '';
         let opened = false;
@@ -365,7 +381,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           dispatch({ type: 'typing', chatId, typing: false });
           dispatch({
             type: 'push',
-            message: { ...blank(bubble, chatId), authorId: AGENT_CONTACT.id, streaming: true },
+            message: {
+              ...blank(bubble, chatId),
+              authorId: AGENT_CONTACT.id,
+              streaming: true,
+              // The join that lets the bubble explain itself (§30).
+              runId,
+            },
           });
         };
 
@@ -414,6 +436,20 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
           onSuspended: () => {
             dispatch({ type: 'typing', chatId, typing: false });
           },
+          onResumed: () => {
+            dispatch({ type: 'typing', chatId, typing: true, by: AGENT_CONTACT.id });
+          },
+          // §27: the ladder moved while this answer was being written.
+          // It goes in the transcript rather than a toast, because it is
+          // a fact about this reply and belongs next to it forever.
+          onDegraded: (level, reason) => {
+            note(`⚠︎ Working with less (${level}): ${reason}. The answer below reflects that.`);
+          },
+          onCancelled: () => {
+            dispatch({ type: 'typing', chatId, typing: false });
+            if (opened) dispatch({ type: 'stream', id: bubble, text: painted, done: true });
+            note('You stopped this one.');
+          },
           onError: (message) => {
             if (opened) {
               dispatch({
@@ -433,9 +469,33 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             ? error.message
             : `⚠︎ ${error instanceof Error ? error.message : 'the agent failed'}`,
         );
+      } finally {
+        // Whatever happened — finished, failed, cancelled, threw — the
+        // run is no longer in flight, so the stop button goes away.
+        setRunning((current) => {
+          const next = { ...current };
+          delete next[chatId];
+          return next;
+        });
       }
     },
     [],
+  );
+
+  const runningRun = useCallback((chatId: string) => running[chatId] ?? null, [running]);
+
+  /**
+   * Stop a run. The server answers 409 if it already finished, which is
+   * a race rather than a failure: the user asked for it to be over, and
+   * it is over either way.
+   */
+  const cancelRun = useCallback(
+    (chatId: string) => {
+      const runId = running[chatId];
+      if (runId === undefined) return;
+      void agent.cancel(runId).catch(() => undefined);
+    },
+    [running],
   );
 
   /** Runs delivery receipts + the auto-reply conversation for an outgoing message. */
@@ -644,6 +704,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     importData,
     enableNotifications,
     notificationsGranted: notificationsAllowed(),
+    runningRun,
+    cancelRun,
   };
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;

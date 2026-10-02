@@ -61,7 +61,7 @@ export function Composer({
   replyTo: Message | null;
   clearReply: () => void;
 }) {
-  const { state, dispatch, send, chatTitle } = useStore();
+  const { state, dispatch, send, chatTitle, runningRun, cancelRun } = useStore();
   const [staged, setStaged] = useState<Staged[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -146,6 +146,8 @@ export function Composer({
 
   const ready = staged.filter((f) => f.status === 'ready' && f.att);
   const canSend = draft.trim().length > 0 || ready.length > 0;
+  /** Non-null while an agent run is streaming into this conversation. */
+  const inFlight = runningRun(chat.id);
 
   const doSend = () => {
     if (!canSend) return;
@@ -648,7 +650,19 @@ export function Composer({
               }}
             />
           </div>
-          {canSend ? (
+          {inFlight !== null ? (
+            // A run that has gone wrong should be stoppable, not waited
+            // out. `POST /runs/:id/cancel` has existed since M2 and
+            // nothing in the UI called it.
+            <button
+              className="stop-btn"
+              onClick={() => cancelRun(chat.id)}
+              title="Stop this run"
+              aria-label="Stop"
+            >
+              <span className="stop-square" aria-hidden="true" />
+            </button>
+          ) : canSend ? (
             <button className={`send-btn ${chat.sms ? 'sms' : ''}`} onClick={doSend} title="Send (Return)">
               <IconSend />
             </button>

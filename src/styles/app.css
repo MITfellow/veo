@@ -4173,3 +4173,472 @@
   color: var(--text-dim);
   line-height: 1.5;
 }
+
+/* ─────────────── §13 — the vault, §30 — the log and the trace ───────────
+ *
+ * Three prefixes, not one: `.vlt-`, `.evt-` and `.trc-` are separate
+ * namespaces because M7 shipped a bug where one panel borrowed another's
+ * class names as test hooks and two panels on the same screen became
+ * ambiguous locators. A shared *look* is fine; a shared hook is not.
+ */
+.vlt-note,
+.evt-note {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.vlt-empty,
+.evt-empty {
+  padding: 12px;
+  border: 1px dashed var(--hairline);
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.vlt-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  margin-bottom: 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.vlt-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.vlt-state.is-unlocked .vlt-dot {
+  background: var(--ok, #2d9d5f);
+}
+
+.vlt-state.is-locked .vlt-dot {
+  background: var(--warn, #d08b14);
+}
+
+.vlt-unlock,
+.vlt-add,
+.vlt-panic {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.vlt-input {
+  padding: 7px 9px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12.5px;
+  font-family: inherit;
+}
+
+.vlt-actions,
+.vlt-row-actions,
+.sch-row-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.vlt-btn,
+.evt-chip,
+.trc-toggle,
+.trc-close {
+  padding: 6px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.vlt-btn:hover,
+.evt-chip:hover,
+.trc-toggle:hover {
+  background: var(--hover, color-mix(in srgb, var(--text) 6%, transparent));
+}
+
+.vlt-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.vlt-btn.is-primary {
+  border-color: transparent;
+  background: var(--accent, #0b84ff);
+  color: #fff;
+}
+
+.vlt-btn.is-danger {
+  color: var(--danger, #d7373f);
+}
+
+.vlt-recovery {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border: 1px solid color-mix(in srgb, var(--warn, #d08b14) 50%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--warn, #d08b14) 8%, transparent);
+}
+
+.vlt-recovery-label {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.vlt-code {
+  padding: 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+  word-break: break-all;
+}
+
+/* flex: none — a flex child with overflow collapses to height 0 inside
+   the settings sheet, which is how the memory list vanished in M6. */
+.vlt-list,
+.evt-list {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.vlt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+}
+
+.vlt-name {
+  font-size: 13px;
+  font-weight: 560;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.vlt-meta {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.vlt-section,
+.evt-count {
+  margin: 10px 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* ── the log ── */
+.evt-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 6px;
+}
+
+.evt-chip {
+  padding: 4px 9px;
+  font-size: 11.5px;
+  border-radius: 999px;
+}
+
+.evt-chip.is-on {
+  border-color: transparent;
+  background: var(--accent, #0b84ff);
+  color: #fff;
+}
+
+.evt-count {
+  margin: 0 0 6px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  font-size: 11.5px;
+}
+
+.evt-row {
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  overflow: hidden;
+}
+
+.evt-head {
+  display: grid;
+  grid-template-columns: 52px 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.evt-head:hover {
+  background: var(--hover, color-mix(in srgb, var(--text) 6%, transparent));
+}
+
+.evt-seq {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-dim);
+}
+
+.evt-type {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evt-trust,
+.evt-time {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.evt-summary {
+  padding: 0 10px 7px 70px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evt-payload,
+.trc-pre {
+  margin: 0;
+  padding: 9px 11px;
+  border-top: 1px solid var(--hairline);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 260px;
+  overflow: auto;
+}
+
+/* ── "why did it say that?" ── */
+.why-btn {
+  display: block;
+  margin: 2px 0 6px 14px;
+  padding: 2px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+
+.why-btn:hover {
+  opacity: 1;
+  color: var(--text);
+}
+
+.trc-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, #000 42%, transparent);
+  backdrop-filter: blur(3px);
+}
+
+.trc-sheet {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: 100%;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.trc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.trc-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.trc-close {
+  padding: 2px 8px;
+  line-height: 1.4;
+}
+
+.trc-body {
+  padding: 12px 14px 16px;
+  overflow: auto;
+}
+
+.trc-empty {
+  padding: 20px 14px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+
+.trc-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+  font-size: 12.5px;
+}
+
+.trc-row > span {
+  color: var(--text-dim);
+}
+
+.trc-warn {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--warn, #d08b14) 50%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--warn, #d08b14) 8%, transparent);
+  font-size: 12px;
+}
+
+.trc-section {
+  margin: 14px 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.trc-note {
+  margin-bottom: 6px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.trc-block {
+  display: grid;
+  grid-template-columns: 96px 1fr 44px;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 11.5px;
+}
+
+.trc-block-name {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trc-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  overflow: hidden;
+}
+
+.trc-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent, #0b84ff);
+}
+
+.trc-block-n {
+  text-align: right;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.trc-line {
+  padding: 3px 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.trc-line.is-failed,
+.trc-line.is-timedout,
+.trc-line.is-denied {
+  color: var(--danger, #d7373f);
+}
+
+.trc-toggle {
+  margin-top: 14px;
+}
+
+/* ── stop a run ── */
+.stop-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border: 0;
+  border-radius: 50%;
+  background: var(--danger, #d7373f);
+  cursor: pointer;
+}
+
+.stop-square {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: #fff;
+}
+
+/* The identity card's share of §22's budget, stated rather than implied. */
+.mem-identity-budget {
+  font-weight: 400;
+  color: var(--text-dim);
+}

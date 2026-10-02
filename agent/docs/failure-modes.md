@@ -216,3 +216,13 @@ the thing that went wrong.
 - **The summarizer is crude.** Compaction keeps the shape of a long
   session but will lose nuance. `history.expand` recovers the original
   turns from the log when it matters.
+- **A capability nobody can reach.** The one with a track record: by the
+  end of M9 the agent served fifty routes and the only UI in the product
+  called thirty-six. The missing fourteen were correct, tested, and from
+  the user's seat indistinguishable from never built — the vault among
+  them, which is the reason every install sat at L2 with no way to
+  supply a model key. It is now a test rather than a hope: the wiring
+  audit runs in both directions and an exemption has to be argued for in
+  writing (decision 039). The same failure one layer in — a module built
+  and never constructed by the composition root — is covered by the
+  layer-by-layer half of the same test.

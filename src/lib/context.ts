@@ -47,6 +47,13 @@ export interface Ctx {
   importData: (file: File) => Promise<void>;
   enableNotifications: () => Promise<boolean>;
   notificationsGranted: boolean;
+  /**
+   * The agent run currently in flight for a chat, if any. The composer
+   * reads this to offer a stop button: a run that has gone wrong should
+   * be stoppable, not waited out.
+   */
+  runningRun: (chatId: string) => string | null;
+  cancelRun: (chatId: string) => void;
 }
 
 export const StoreContext = createContext<Ctx | null>(null);

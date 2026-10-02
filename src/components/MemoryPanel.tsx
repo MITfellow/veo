@@ -52,6 +52,10 @@ export default function MemoryPanel({ onNotice }: { onNotice: (message: string) 
   const [facts, setFacts] = useState<MemoryFact[]>([]);
   const [counts, setCounts] = useState<MemoryCounts | null>(null);
   const [identity, setIdentity] = useState<string | null>(null);
+  /** How much of §22's identity budget the card is using. */
+  const [identityBudget, setIdentityBudget] = useState<{ tokens: number; max: number } | null>(
+    null,
+  );
   const [digest, setDigest] = useState<string | null>(null);
   const [open, setOpen] = useState<MemoryExplanation | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
@@ -74,14 +78,23 @@ export default function MemoryPanel({ onNotice }: { onNotice: (message: string) 
           : tab === 'all'
             ? { status: 'all', q: query }
             : { status: 'active', q: query };
-    const [list, extras] = await Promise.all([agent.memory(filter), agent.memoryDigest()]);
-    return { list, extras };
+    const [list, extras, card] = await Promise.all([
+      agent.memory(filter),
+      agent.memoryDigest(),
+      agent.identityCard(),
+    ]);
+    return { list, extras, card };
   }, [tab, query]);
 
   const apply = useCallback((result: Awaited<ReturnType<typeof load>>) => {
     setFacts(result.list.facts);
     setCounts(result.list.counts);
     setIdentity(result.extras.identity?.text ?? null);
+    setIdentityBudget(
+      result.card.card === null
+        ? null
+        : { tokens: result.card.card.tokens, max: result.card.maxTokens },
+    );
     setDigest(result.extras.entries[0]?.text ?? null);
     setError(null);
     setLoading(false);
@@ -150,7 +163,15 @@ export default function MemoryPanel({ onNotice }: { onNotice: (message: string) 
 
       {identity !== null && (
         <div className="mem-identity">
-          <div className="mem-identity-head">How it would introduce you in a new conversation</div>
+          <div className="mem-identity-head">
+            How it would introduce you in a new conversation
+            {identityBudget !== null ? (
+              <span className="mem-identity-budget">
+                {' '}
+                · {identityBudget.tokens} of {identityBudget.max} tokens
+              </span>
+            ) : null}
+          </div>
           {identity.split('\n').map((line, index) => (
             <div key={index}>{line}</div>
           ))}

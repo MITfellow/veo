@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { agent, AgentUnavailableError, parseFrame, type RunHandlers } from './agent';
+import {
+  agent,
+  AgentUnavailableError,
+  parseFrame,
+  VaultLockedError,
+  type RunHandlers,
+} from './agent';
 
 /** A body that yields the given SSE text in arbitrary byte-sized pieces. */
 function streamOf(text: string, pieces = 3): ReadableStream<Uint8Array<ArrayBuffer>> {
@@ -141,5 +147,146 @@ describe('talking to the runtime', () => {
   it('reports an HTTP failure with the status and the body', async () => {
     mockFetch({ ok: false, status: 401, text: async () => 'unauthorized' });
     await expect(agent.createSession('x')).rejects.toThrow('agent returned 401: unauthorized');
+  });
+});
+
+/**
+ * The surfaces M0–M9 built and the UI could not reach.
+ *
+ * Each of these is a route that existed, was tested on the server, and
+ * had no client method — which from the user's seat is the same as not
+ * existing. The tests are deliberately shallow: the behaviour is the
+ * server's and is tested there. What is being asserted here is that the
+ * client asks for the right URL with the right verb, because that is the
+ * exact thing that was wrong.
+ */
+describe('the rest of the harness', () => {
+  const json = (data: unknown) => mockFetch({ json: () => Promise.resolve(data) });
+
+  it('events() builds the query from the filter and drops the empty parts', async () => {
+    const spy = json({ events: [], total: 0 });
+    await agent.events({ types: ['model.requested', 'model.failed'], runId: 'r-9', limit: 50 });
+    const url = spy.mock.calls[0]![0] as string;
+    expect(url).toContain('/agent/events?');
+    expect(url).toContain('types=model.requested%2Cmodel.failed');
+    expect(url).toContain('runId=r-9');
+    expect(url).toContain('limit=50');
+    expect(url).not.toContain('sessionId');
+  });
+
+  it('events() defaults to a bounded page rather than the whole log', async () => {
+    const spy = json({ events: [], total: 0 });
+    await agent.events();
+    expect(spy.mock.calls[0]![0]).toContain('limit=100');
+  });
+
+  it('trace() unwraps the structured trace', async () => {
+    json({ trace: { runId: 'r-1', status: 'finished' } });
+    await expect(agent.trace('r-1')).resolves.toMatchObject({ runId: 'r-1' });
+  });
+
+  it('deadLetters() unwraps the list the queue calls `dead`', async () => {
+    json({ dead: [{ id: 'd-1', kind: 'run', attempts: 5 }] });
+    await expect(agent.deadLetters()).resolves.toHaveLength(1);
+  });
+
+  it('replayJob() posts to the replay route', async () => {
+    const spy = json({ jobId: 'j-2' });
+    await agent.replayJob('d-1');
+    expect(spy.mock.calls[0]![0]).toBe('/agent/jobs/d-1/replay');
+    expect((spy.mock.calls[0]![1] as RequestInit).method).toBe('POST');
+  });
+
+  it('vault() reads the state and the metadata', async () => {
+    json({ state: 'unlocked', secrets: [] });
+    await expect(agent.vault()).resolves.toEqual({ state: 'unlocked', secrets: [] });
+  });
+
+  it('putSecret() sends the value exactly once, to the create route', async () => {
+    const spy = json({ ref: 'secret://api_key#1' });
+    await agent.putSecret('api_key', 'sk-live-xyz');
+    expect(spy.mock.calls[0]![0]).toBe('/agent/vault/secrets');
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ name: 'api_key', value: 'sk-live-xyz' });
+  });
+
+  it('rotateSecret() escapes the name into the path', async () => {
+    const spy = json({ ref: 'secret://a%2Fb#2' });
+    await agent.rotateSecret('a/b', 'next');
+    expect(spy.mock.calls[0]![0]).toBe('/agent/vault/secrets/a%2Fb/rotate');
+  });
+
+  it('deleteSecret() uses DELETE, not a POST that pretends', async () => {
+    const spy = json({ destroyed: 1 });
+    await agent.deleteSecret('api_key');
+    expect((spy.mock.calls[0]![1] as RequestInit).method).toBe('DELETE');
+  });
+
+  it('unlockVault() surfaces the one-time recovery code when the vault is new', async () => {
+    json({ state: 'unlocked', recoveryCode: 'abcd-efgh' });
+    await expect(agent.unlockVault('hunter2')).resolves.toMatchObject({
+      recoveryCode: 'abcd-efgh',
+    });
+  });
+
+  it('lockVault() posts to lock', async () => {
+    const spy = json({ state: 'locked' });
+    await agent.lockVault();
+    expect(spy.mock.calls[0]![0]).toBe('/agent/vault/lock');
+  });
+
+  it('panicVault() sends the literal sentence, which no caller can shorten', async () => {
+    const spy = json({ state: 'uninitialized', destroyed: true });
+    await agent.panicVault();
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    expect(JSON.parse(init.body as string)).toEqual({ confirm: 'destroy my secrets' });
+  });
+
+  it('a 423 from any vault route is a locked vault, not a mystery number', async () => {
+    mockFetch({ ok: false, status: 423, text: () => Promise.resolve('locked') });
+    await expect(agent.vault()).rejects.toBeInstanceOf(VaultLockedError);
+    await expect(agent.vault()).rejects.toThrow('Unlock it with your passphrase');
+  });
+});
+
+/**
+ * Four frames the server has always sent and the client silently threw
+ * away. `degraded` is the one that mattered: §27's entire argument is
+ * that the agent says so when it is working with less, and a UI that
+ * drops the frame turns that into a comfortable lie.
+ */
+describe('the frames the client used to drop', () => {
+  const follow = async (frame: string, handlers: RunHandlers) => {
+    mockFetch({ body: streamOf(`${frame}\n\n`, 2) });
+    await agent.follow('run-1', handlers);
+  };
+
+  it('reports a degradation that happened mid-run', async () => {
+    const seen: string[] = [];
+    await follow('event: degraded\ndata: {"level":"L2","reason":"no model configured"}', {
+      onDegraded: (level, reason) => seen.push(`${level}:${reason}`),
+    });
+    expect(seen).toEqual(['L2:no model configured']);
+  });
+
+  it('distinguishes a cancelled run from a finished one', async () => {
+    const seen: string[] = [];
+    await follow('event: cancelled\ndata: {}', { onCancelled: () => seen.push('cancelled') });
+    expect(seen).toEqual(['cancelled']);
+  });
+
+  it('reports a step closing, with its outcome and cost', async () => {
+    const seen: string[] = [];
+    await follow('event: step-done\ndata: {"index":2,"outcome":"tools","durationMs":310}', {
+      onStepDone: (index, outcome, ms) => seen.push(`${index}:${outcome}:${ms}`),
+    });
+    expect(seen).toEqual(['2:tools:310']);
+  });
+
+  it('reports a run coming back from an approval suspension', async () => {
+    const seen: string[] = [];
+    await follow('event: resumed\ndata: {}', { onResumed: () => seen.push('resumed') });
+    expect(seen).toEqual(['resumed']);
   });
 });

@@ -5,6 +5,7 @@ import { needsSeparator, sameGroup, separatorStamp, timeOfDay, separatorStamp as
 import { Avatar } from './Avatar';
 import { ApprovalCard } from './ApprovalCard';
 import { Bubble } from './Bubble';
+import TraceSheet from './TraceSheet';
 import { Lightbox, type LightboxItem } from './Lightbox';
 
 export function MessageList({
@@ -32,6 +33,8 @@ export function MessageList({
   const seen = useRef<Set<string>>(new Set());
   const firstPaint = useRef(true);
   const [zoom, setZoom] = useState<string | null>(null);
+  /** §30 — the run whose trace is open, if the user asked. */
+  const [traceRunId, setTraceRunId] = useState<string | null>(null);
   const [atBottom, setAtBottom] = useState(true);
   const [dragging, setDragging] = useState(false);
 
@@ -292,6 +295,15 @@ export function MessageList({
                 onJumpTo={jumpTo}
               />
             )}
+            {m.runId !== undefined && !m.system ? (
+              <button
+                className="why-btn"
+                onClick={() => setTraceRunId(m.runId ?? null)}
+                title="See the context, the tools and the constitution checks behind this reply"
+              >
+                Why did it say that?
+              </button>
+            ) : null}
           </div>
         );
       })}
@@ -331,6 +343,9 @@ export function MessageList({
       )}
 
       {zoom && <Lightbox items={photos} startSrc={zoom} onClose={() => setZoom(null)} />}
+      {traceRunId !== null && (
+        <TraceSheet runId={traceRunId} onClose={() => setTraceRunId(null)} />
+      )}
     </div>
   );
 }

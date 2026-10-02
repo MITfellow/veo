@@ -5,6 +5,8 @@ import MemoryPanel from './MemoryPanel';
 import ConstitutionPanel from './ConstitutionPanel';
 import SchedulePanel from './SchedulePanel';
 import ProofPanel from './ProofPanel';
+import VaultPanel from './VaultPanel';
+import EventLogPanel from './EventLogPanel';
 import { Avatar } from './Avatar';
 import { MemojiPicker } from './MemojiPicker';
 import { Memoji } from './Memoji';
@@ -290,6 +292,10 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
           <MemoryPanel onNotice={setNotice} />
 
           <ProofPanel onNotice={setNotice} />
+
+          <VaultPanel onNotice={setNotice} />
+
+          <EventLogPanel onNotice={setNotice} />
 
           <StoragePanel onNotice={setNotice} />
 

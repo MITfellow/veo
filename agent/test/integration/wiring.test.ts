@@ -166,4 +166,111 @@ describe('every layer is actually wired into the product', () => {
     });
     expect(missing, 'the client calls routes the agent does not serve').toEqual([]);
   });
+
+  /**
+   * The same audit, pointed the other way — and the one that actually
+   * finds things.
+   *
+   * The forward check above catches a rename. It cannot catch the much
+   * more common failure: the server grows a capability, the capability
+   * is correct and tested, and no client ever asks for it. That is
+   * invisible to every test on both sides and visible to the user as a
+   * feature that was never built. It had happened to twelve routes by
+   * the end of M9 — the whole vault among them, which is why every
+   * install anyone ran sat at L2 with no way to supply a model key.
+   *
+   * An exemption has to be argued for in writing, here, next to the
+   * name. Silence is not an exemption.
+   */
+  it('every route the agent serves is reachable from the Veo client', () => {
+    const UNSURFACED: Record<string, string> = {
+      'GET /health':
+        'called by the dev proxy and the e2e harness, not by the UI: a health probe the ' +
+        'user has to read is a health probe that failed.',
+      'GET /sessions':
+        'Veo owns conversation identity. The agent session is an implementation detail ' +
+        'reached through `chat.agentSessionId`; a second list would be a competing source ' +
+        'of truth about what conversations exist.',
+      'PUT /constitution':
+        'replaces the whole document in one write, which defeats the article-level ' +
+        'amendment history the constitution panel exists to show. The UI amends; it does ' +
+        'not overwrite.',
+      'GET /runs/:id/stream':
+        'not a `call()` — `follow()` opens it with a raw fetch because it is an SSE body, ' +
+        'not JSON.',
+    };
+
+    const server = readFileSync(new URL('../../src/interface/http.ts', import.meta.url), 'utf8');
+    const client = readFileSync(new URL('../../../src/lib/agent.ts', import.meta.url), 'utf8');
+
+    const routes = [...server.matchAll(/this\.add\(\s*'([A-Z]+)',\s*'([^']+)'/g)].map(
+      ([, method, path]) => ({ method: method!, path: path! }),
+    );
+    // If this ever reads zero routes the regex has rotted and the test is
+    // passing by vacuum.
+    expect(routes.length).toBeGreaterThan(40);
+
+    // Every path the client sends, with its verb, normalised the same way
+    // the forward check normalises them.
+    const calls = [...client.matchAll(/call(?:Text)?<?[^>]*>?\(\s*([`'"])([^`'"]+)\1([^)]*)/g)].map(
+      ([, , path, rest]) => ({
+        path: path!
+          .replace(/\$\{[^}]*\}/g, ':x')
+          // An interpolation glued onto a literal segment is a query
+          // string being appended conditionally — `/memory${q}` — not a
+          // path parameter. Dropping it is what makes `/memory` match.
+          .replace(/([^/]):x/g, '$1')
+          // A nested template — `/memory${q === '' ? '' : `?${q}`}` —
+          // defeats the quote-delimited capture above; everything from
+          // the first unclosed interpolation on is a query string.
+          .replace(/\$\{.*$/, '')
+          .split('?')[0]!,
+        method: /method:\s*'([A-Z]+)'/.exec(rest ?? '')?.[1] ?? 'GET',
+      }),
+    );
+
+    // A second pass for the calls the first one cannot see: a template
+    // containing a *nested* template — `/memory${q === '' ? '' : `?${q}`}`
+    // — has quotes inside it, so the quote-delimited capture above never
+    // completes. The literal prefix before the first interpolation is
+    // enough to identify the route.
+    calls.push(
+      ...[...client.matchAll(/call(?:Text)?<?[^>(]*>?\(\s*`([^`$]*)\$\{([^`]*)/g)].map(
+        ([, prefix, rest]) => ({
+          path: prefix!.split('?')[0]!.replace(/\/$/, ''),
+          method: /method:\s*'([A-Z]+)'/.exec(rest ?? '')?.[1] ?? 'GET',
+        }),
+      ),
+    );
+    // `follow()` is the one raw fetch, and it is exempted by name below.
+
+    const matches = (route: { method: string; path: string }): boolean =>
+      calls.some((callSite) => {
+        if (callSite.method !== route.method) return false;
+        const expected = route.path.split('/').filter(Boolean);
+        const actual = callSite.path.split('/').filter(Boolean);
+        if (expected.length !== actual.length) return false;
+        return expected.every(
+          (segment, i) => segment.startsWith(':') || segment === actual[i],
+        );
+      });
+
+    const unreachable = routes
+      .map((route) => `${route.method} ${route.path}`)
+      .filter((name, index) => !matches(routes[index]!) && UNSURFACED[name] === undefined);
+
+    expect(
+      unreachable,
+      'the agent serves these and no UI can reach them — wire them, or add them to ' +
+        'UNSURFACED with the reason',
+    ).toEqual([]);
+
+    // And the exemption list cannot rot into a list of names that no
+    // longer exist, which is how an allowlist stops being read.
+    const served = new Set(routes.map((route) => `${route.method} ${route.path}`));
+    expect(
+      Object.keys(UNSURFACED).filter((name) => !served.has(name)),
+      'UNSURFACED names a route the agent no longer serves',
+    ).toEqual([]);
+  });
 });

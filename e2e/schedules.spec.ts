@@ -104,6 +104,19 @@ test('the agent says when it is degraded instead of answering worse quietly', as
   // says it must admit that rather than look fully capable.
   const banner = page.locator('.sch-degraded');
   await expect(banner).toBeVisible();
-  await expect(banner).toContainText('L2');
   await expect(banner).toContainText('fallback');
+
+  // The level itself is not hardcoded, and deliberately so. §27 defines
+  // the level as the *maximum* of every live signal, so asserting a
+  // literal here only holds while the model is the only thing degraded —
+  // which stopped being true the moment the UI could create a vault (a
+  // locked keyring is L4). Comparing the banner against the server is
+  // both order-independent and a stronger claim: it catches the UI and
+  // the ladder disagreeing, which a literal never could.
+  const level = await page.evaluate(async () => {
+    const response = await fetch('/agent/degradation', { cache: 'no-store' });
+    return ((await response.json()) as { level: string }).level;
+  });
+  expect(level).not.toBe('L0');
+  await expect(banner).toContainText(level);
 });

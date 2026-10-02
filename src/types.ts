@@ -108,6 +108,12 @@ export interface Message {
   /** system notices: "Name named the conversation ..." */
   system?: boolean;
   /**
+   * The agent run that produced this message, when one did. It is the
+   * join §30 needs: the bubble can fetch its own trace and answer "why
+   * did it say that?" without the user matching run ids by eye.
+   */
+  runId?: string;
+  /**
    * The agent is asking permission before doing something irreversible
    * (§19). Rendered as a card with the preview it generated, not as text:
    * an approval the user can mistake for chatter is not consent.

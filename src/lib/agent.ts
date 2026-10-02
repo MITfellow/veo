@@ -163,6 +163,18 @@ export interface JobView {
   enqueuedAt: number;
 }
 
+/** §28 — a job that used every retry and was kept rather than dropped. */
+export interface DeadLetterView {
+  id: string;
+  kind: string;
+  principal: string;
+  attempts: number;
+  error: string;
+  scheduleId: string | null;
+  diedAt: number;
+  replayedAt: number | null;
+}
+
 export interface DegradationView {
   level: 'L0' | 'L1' | 'L2' | 'L3' | 'L4';
   meaning: string;
@@ -206,6 +218,86 @@ export interface BackupReport {
   elapsedMs: number;
 }
 
+/**
+ * §13's vault, as much of it as is safe to describe.
+ *
+ * There is no `value` field and there will not be one: the server never
+ * sends plaintext out of the vault, and the client type is written so
+ * that a server that started doing so would not compile into the UI.
+ */
+export interface SecretView {
+  name: string;
+  version: number;
+  label: string | null;
+  createdAt: number;
+  rotatedAt: number | null;
+  destroyedAt: number | null;
+  lastReadAt: number | null;
+  readCount: number;
+}
+
+export interface VaultView {
+  state: 'uninitialized' | 'locked' | 'unlocked';
+  secrets: SecretView[];
+}
+
+/** §30 — one row of the log, as the inspector shows it. */
+export interface EventView {
+  seq: number;
+  id: string;
+  type: string;
+  ts: number;
+  trust: string;
+  sessionId: string | null;
+  runId: string | null;
+  payload: Record<string, unknown>;
+}
+
+export interface EventFilter {
+  types?: string[];
+  sessionId?: string;
+  runId?: string;
+  limit?: number;
+}
+
+/**
+ * §30's structured trace. A faithful subset of the agent's `Trace`: the
+ * fields the UI renders, named exactly as the server names them, so a
+ * rename on either side is a type error rather than an empty panel.
+ */
+export interface TraceView {
+  runId: string;
+  sessionId: string | null;
+  trigger: string | null;
+  startedAt: number | null;
+  endedAt: number | null;
+  status: 'finished' | 'failed' | 'cancelled' | 'suspended' | 'running';
+  reason: string | null;
+  context: {
+    digest: string;
+    totalTokens: number;
+    policyVersion: string;
+    blocks: Array<{ name: string; tokens: number; items: number }>;
+    drops: Array<{ block: string; dropped: number; reason: string }>;
+  } | null;
+  modelCalls: Array<{
+    at: number;
+    provider: string;
+    model: string;
+    inputTokens: number;
+    outputTokens: number | null;
+    latencyMs: number | null;
+    finishReason: string | null;
+    failed: string | null;
+  }>;
+  toolCalls: Array<{ at: number; tool: string; outcome: string; durationMs: number | null; detail: string }>;
+  recalls: Array<{ at: number; query: string; candidates: number; selected: string[] }>;
+  approvals: Array<{ at: number; tool: string; risk: string; decision: string | null }>;
+  governance: Array<{ at: number; articleId: string; verdict: string; detail: string }>;
+  degradation: Array<{ at: number; level: string; reason: string }>;
+  totals: { steps: number; tokens: number; costCents: number; toolMs: number; wallMs: number };
+}
+
 export interface AgentSession {
   id: string;
   title: string | null;
@@ -233,13 +325,32 @@ export interface PendingApproval {
 export interface RunHandlers {
   onDelta?: (text: string) => void;
   onStep?: (index: number, trust: string) => void;
+  onStepDone?: (index: number, outcome: string, durationMs: number) => void;
   onTool?: (tool: string) => void;
+  /**
+   * §27's ladder moved while this run was in flight. The run is still
+   * going; it is going with less. A UI that drops this frame is telling
+   * the user a comfortable lie about what just answered them.
+   */
+  onDegraded?: (level: string, reason: string) => void;
+  /** The run stopped because someone asked it to, not because it failed. */
+  onCancelled?: () => void;
+  /** Came back from an approval suspension. */
+  onResumed?: () => void;
   onApproval?: (approval: { id: string; tool: string; preview: string; risk: string }) => void;
   onApprovalDecided?: (id: string, outcome: string) => void;
   onMessage?: (text: string) => void;
   onDone?: (summary: { reason: string; steps: number; tokens: number }) => void;
   onError?: (message: string) => void;
   onSuspended?: () => void;
+}
+
+/** §13 — the vault is sealed. Recoverable, and the panel says how. */
+export class VaultLockedError extends Error {
+  constructor() {
+    super('The vault is locked. Unlock it with your passphrase to see or change secrets.');
+    this.name = 'VaultLockedError';
+  }
 }
 
 export class AgentUnavailableError extends Error {
@@ -253,6 +364,13 @@ export class AgentUnavailableError extends Error {
 }
 
 const BASE = '/agent';
+
+/**
+ * The exact sentence `POST /vault/panic` demands. Irreversible actions
+ * get a literal rather than a boolean: a dialog can be clicked through,
+ * a sentence has to be typed.
+ */
+export const PANIC_CONFIRMATION = 'destroy my secrets';
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
@@ -273,6 +391,10 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!response.ok) {
     const body = await response.text().catch(() => '');
+    // §13: a locked vault answers 423 to every route that would read a
+    // secret. That is a state the user can fix, not an error they should
+    // have to decode out of a status code.
+    if (response.status === 423) throw new VaultLockedError();
     throw new Error(`agent returned ${response.status}: ${body.slice(0, 200)}`);
   }
   return (await response.json()) as T;
@@ -358,6 +480,19 @@ export const agent = {
     identity: { text: string; tokens: number; updatedAt: number } | null;
   }> {
     return call('/memory/digest');
+  },
+
+  /**
+   * §22's identity card — what the agent would say about you to open a
+   * new conversation — with the token cap the context actually applies,
+   * so a person reading it knows they are seeing all of it rather than
+   * the first 400 tokens of something longer.
+   */
+  async identityCard(): Promise<{
+    card: { text: string; tokens: number; updatedAt: number } | null;
+    maxTokens: number;
+  }> {
+    return call('/memory/identity-card');
   },
 
   async exportMemory(): Promise<unknown> {
@@ -453,6 +588,102 @@ export const agent = {
   /** The readable trace — §30's "why did it say that?". */
   async traceText(runId: string): Promise<string> {
     return callText(`/runs/${runId}/trace?format=text`);
+  },
+
+  /** The same trace, structured, for a UI that wants to lay it out. */
+  async trace(runId: string): Promise<TraceView> {
+    const data = await call<{ trace: TraceView }>(`/runs/${runId}/trace`);
+    return data.trace;
+  },
+
+  /* ───────────────────────── §30: the log itself ────────────────────────── */
+
+  /**
+   * The event log, which is the system of record for everything else in
+   * this file. Everything the other panels show is a projection of these
+   * rows; this is the row.
+   */
+  async events(filter: EventFilter = {}): Promise<{ events: EventView[]; total: number }> {
+    const params = new URLSearchParams();
+    if (filter.types !== undefined && filter.types.length > 0)
+      params.set('types', filter.types.join(','));
+    if (filter.sessionId !== undefined && filter.sessionId !== '')
+      params.set('sessionId', filter.sessionId);
+    if (filter.runId !== undefined && filter.runId !== '') params.set('runId', filter.runId);
+    params.set('limit', String(filter.limit ?? 100));
+    return call(`/events?${params.toString()}`);
+  },
+
+  /* ──────────────────── §28: the jobs that gave up ──────────────────────── */
+
+  async deadLetters(): Promise<DeadLetterView[]> {
+    const data = await call<{ dead: DeadLetterView[] }>('/jobs/dead-letter');
+    return data.dead;
+  },
+
+  /** Put a dead job back on the queue. §28: nothing fails silently. */
+  async replayJob(id: string): Promise<{ jobId: string }> {
+    return call(`/jobs/${id}/replay`, { method: 'POST' });
+  },
+
+  /* ──────────────────────────── §13: the vault ──────────────────────────── */
+
+  async vault(): Promise<VaultView> {
+    return call('/vault/secrets');
+  },
+
+  /**
+   * Store a secret. The value goes up and never comes back down: there is
+   * no read route, by design, so this is the only moment the plaintext
+   * exists outside the vault.
+   */
+  async putSecret(name: string, value: string, label?: string): Promise<{ ref: string }> {
+    return call('/vault/secrets', {
+      method: 'POST',
+      body: JSON.stringify({ name, value, ...(label === undefined ? {} : { label }) }),
+    });
+  },
+
+  async rotateSecret(name: string, value: string): Promise<{ ref: string }> {
+    return call(`/vault/secrets/${encodeURIComponent(name)}/rotate`, {
+      method: 'POST',
+      body: JSON.stringify({ value }),
+    });
+  },
+
+  async deleteSecret(name: string): Promise<{ destroyed: number }> {
+    return call(`/vault/secrets/${encodeURIComponent(name)}`, { method: 'DELETE' });
+  },
+
+  /**
+   * Unlock, or initialise on first use. A first unlock returns a recovery
+   * code that is shown once and stored nowhere — the caller has to put it
+   * in front of the user immediately or lose it.
+   */
+  async unlockVault(passphrase: string): Promise<{ state: string; recoveryCode?: string }> {
+    return call('/vault/unlock', { method: 'POST', body: JSON.stringify({ passphrase }) });
+  },
+
+  async lockVault(): Promise<{ state: string }> {
+    return call('/vault/lock', { method: 'POST' });
+  },
+
+  /**
+   * Destroy the keyring. Every secret becomes permanently unreadable,
+   * including in backups that already exist. The confirmation sentence is
+   * a literal the server insists on; it is spelled out here rather than
+   * passed in so no caller can reduce it to a boolean.
+   */
+  async panicVault(): Promise<{ state: string; destroyed: boolean }> {
+    return call('/vault/panic', {
+      method: 'POST',
+      body: JSON.stringify({ confirm: PANIC_CONFIRMATION }),
+    });
+  },
+
+  /** Decision 038: import refuses a non-empty install rather than merging. */
+  async importAll(snapshot: unknown): Promise<{ imported: number }> {
+    return call('/import', { method: 'POST', body: JSON.stringify(snapshot) });
   },
 
   async verifyBackup(): Promise<BackupReport> {
@@ -563,8 +794,27 @@ function dispatchFrame(frame: Frame, handlers: RunHandlers): void {
         (frame.data.effectiveTrust as string | undefined) ?? 'USER',
       );
       break;
+    case 'step-done':
+      handlers.onStepDone?.(
+        (frame.data.index as number | undefined) ?? 0,
+        (frame.data.outcome as string | undefined) ?? 'finish',
+        (frame.data.durationMs as number | undefined) ?? 0,
+      );
+      break;
     case 'tool':
       handlers.onTool?.((frame.data.tool as string | undefined) ?? 'a tool');
+      break;
+    case 'degraded':
+      handlers.onDegraded?.(
+        (frame.data.level as string | undefined) ?? 'L1',
+        (frame.data.reason as string | undefined) ?? 'the agent is working with less than usual',
+      );
+      break;
+    case 'cancelled':
+      handlers.onCancelled?.();
+      break;
+    case 'resumed':
+      handlers.onResumed?.();
       break;
     case 'approval':
       handlers.onApproval?.({
