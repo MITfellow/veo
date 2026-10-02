@@ -4014,6 +4014,154 @@
   color: var(--danger, #d7373f);
 }
 
+/* ───────────────────────── S1 — the calendar ─────────────────────────────
+ *
+ * Its own `cal-` prefix, for the reason written above `.sch-note`: shared
+ * looks are fine, shared hooks are not.
+ *
+ * An agenda rather than a grid. A month grid shows the shape of a month
+ * and hides the detail of a day, and "what is next" is the question
+ * people actually have. Time sits in a fixed-width gutter so the eye can
+ * scan down it.
+ */
+.cal-note {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.cal-empty {
+  padding: 12px;
+  border: 1px dashed var(--hairline);
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.cal-search,
+.cal-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+}
+
+/* `flex: none`, like the other panel lists: a flex child with overflow
+ * collapses to height 0 inside the Settings sheet. */
+.cal-list {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.cal-day {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cal-daylabel {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.cal-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.cal-time {
+  flex: none;
+  width: 68px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.cal-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.cal-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.cal-where {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* Stated, not enforced — double-booking is sometimes deliberate. */
+.cal-clash {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--warn, #c9821a);
+}
+
+.cal-add {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 8px;
+}
+
+.cal-addrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cal-zone {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.cal-btn {
+  padding: 6px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.cal-btn:hover {
+  background: var(--hover, color-mix(in srgb, var(--text) 6%, transparent));
+}
+
+.cal-btn.is-primary {
+  border-color: transparent;
+  background: var(--accent, #0b84ff);
+  color: #fff;
+}
+
+.cal-btn.is-danger {
+  color: var(--danger, #d7373f);
+}
+
 /* ───────────── §29/§30 — voice, proof and portability (M9) ─────────────
  *
  * Its own prefix again. One number per tile, the thing it measures under

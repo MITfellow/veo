@@ -28,6 +28,7 @@ import { report as calibrationReport } from '../cognition/calibration/confidence
 import type { Schedule, ScheduleStore } from '../orchestration/schedule.js';
 import { ScheduleParseError } from '../orchestration/schedule.js';
 import { IDENTITY_CARD_MAX_TOKENS } from '../cognition/context/types.js';
+import type { CalendarEvent, CalendarStore } from '../cognition/calendar/store.js';
 import { PersonaSchema, type PersonaStore } from '../cognition/persona/store.js';
 import { traceOf, renderTrace } from '../observability/trace.js';
 import { computeMetrics } from '../observability/metrics.js';
@@ -95,6 +96,8 @@ export interface ApiDeps {
   ladder?: Degradation;
   /** §29's persona (M9). */
   persona?: PersonaStore;
+  /** S1's calendar. Omitted → the calendar routes 404. */
+  calendar?: CalendarStore;
   /**
    * §13's vault and keyring (M9). Omitted → the vault routes 404, which is
    * the honest answer for a build that has no secret storage wired.
@@ -190,6 +193,38 @@ const UpdateScheduleBody = z.object({
   catchUp: z.enum(['fire-all', 'fire-once', 'skip']).optional(),
   enabled: z.boolean().optional(),
 });
+
+const CalendarQuery = z.object({
+  from: z.coerce.number().int().optional(),
+  to: z.coerce.number().int().optional(),
+  q: z.string().max(200).optional(),
+});
+
+const CreateEventBody = z.object({
+  title: z.string().min(1).max(200),
+  startsAt: z.number().int(),
+  endsAt: z.number().int().optional(),
+  allDay: z.boolean().optional(),
+  timezone: z.string().max(64).optional(),
+  location: z.string().max(200).nullable().optional(),
+  notes: z.string().max(2000).nullable().optional(),
+});
+
+/** The wire shape of a calendar event — camelCase, no principal. */
+function eventView(event: CalendarEvent) {
+  return {
+    id: event.id,
+    title: event.title,
+    startsAt: event.startsAt,
+    endsAt: event.endsAt,
+    allDay: event.allDay,
+    timezone: event.timezone,
+    location: event.location,
+    notes: event.notes,
+    createdAt: event.createdAt,
+    cancelledAt: event.cancelledAt,
+  };
+}
 
 function scheduleView(schedule: Schedule) {
   return {
@@ -1111,6 +1146,75 @@ export class Api {
       }
       const saved = persona.put(principal, parsed.data);
       json(res, 200, { persona: saved, rendered: persona.lines(principal) });
+    });
+
+    /* ──────────────────────── S1 — the calendar ─────────────────────── */
+
+    // Local by construction: these read and write the agent's own event
+    // log. There is no connector behind them and nothing leaves the box.
+
+    const calendar = this.deps.calendar;
+
+    this.add('GET', '/calendar', ({ res, url, principal }) => {
+      if (calendar === undefined) return json(res, 404, { error: 'no_calendar' });
+      const parsed = CalendarQuery.safeParse({
+        from: url.searchParams.get('from') ?? undefined,
+        to: url.searchParams.get('to') ?? undefined,
+        q: url.searchParams.get('q') ?? undefined,
+      });
+      if (!parsed.success) {
+        return json(res, 400, { error: 'invalid_window', detail: parsed.error.issues });
+      }
+      if (parsed.data.q !== undefined && parsed.data.q !== '') {
+        return json(res, 200, { events: calendar.find(principal, parsed.data.q).map(eventView) });
+      }
+      const window = {
+        ...(parsed.data.from === undefined ? {} : { from: parsed.data.from }),
+        ...(parsed.data.to === undefined ? {} : { to: parsed.data.to }),
+      };
+      json(res, 200, { events: calendar.list(principal, window).map(eventView) });
+    });
+
+    this.add('POST', '/calendar', async ({ res, body, principal }) => {
+      if (calendar === undefined) return json(res, 404, { error: 'no_calendar' });
+      const parsed = CreateEventBody.safeParse(await body());
+      if (!parsed.success) {
+        return json(res, 400, { error: 'invalid_event', detail: parsed.error.issues });
+      }
+      try {
+        const created = calendar.add(principal, {
+          title: parsed.data.title,
+          startsAt: parsed.data.startsAt,
+          ...(parsed.data.endsAt === undefined ? {} : { endsAt: parsed.data.endsAt }),
+          ...(parsed.data.allDay === undefined ? {} : { allDay: parsed.data.allDay }),
+          ...(parsed.data.timezone === undefined ? {} : { timezone: parsed.data.timezone }),
+          ...(parsed.data.location === undefined ? {} : { location: parsed.data.location }),
+          ...(parsed.data.notes === undefined ? {} : { notes: parsed.data.notes }),
+        });
+        json(res, 201, {
+          ...eventView(created),
+          // Reported, never enforced — see the tool.
+          conflicts: calendar
+            .conflicts(principal, created.startsAt, created.endsAt, created.id)
+            .map((other) => ({ id: other.id, title: other.title })),
+        });
+      } catch (error) {
+        // A backwards end or an unknown timezone is the caller's mistake.
+        json(res, 400, {
+          error: 'invalid_event',
+          detail: error instanceof Error ? error.message : 'the event could not be added',
+        });
+      }
+    });
+
+    this.add('DELETE', '/calendar/:id', ({ res, params, principal }) => {
+      if (calendar === undefined) return json(res, 404, { error: 'no_calendar' });
+      const cancelled = calendar.cancel(principal, params.id ?? '');
+      json(
+        res,
+        cancelled ? 200 : 404,
+        cancelled ? { cancelled: params.id } : { error: 'no_such_event' },
+      );
     });
 
     /* ────────────────── §28 — schedules, jobs, degradation ────────────── */

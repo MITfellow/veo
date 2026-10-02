@@ -34,6 +34,13 @@ export type Capability =
   | 'memory:write:quarantined'
   | 'memory:read'
   | 'schedule:create'
+  /**
+   * S1's calendar. Split read from write for the same reason
+   * `vault:list` is not `vault:read`: a tool that needs to know what is
+   * on today should not thereby be able to cancel it.
+   */
+  | 'calendar:read'
+  | 'calendar:write'
   | 'approval:request';
 
 /**
@@ -59,6 +66,8 @@ const CAPABILITY_CEILING: Record<TrustLevel, ReadonlySet<Capability>> = {
     'memory:write:quarantined',
     'memory:read',
     'schedule:create',
+    'calendar:read',
+    'calendar:write',
     'approval:request',
   ]),
   USER: new Set<Capability>([
@@ -75,6 +84,8 @@ const CAPABILITY_CEILING: Record<TrustLevel, ReadonlySet<Capability>> = {
     'memory:write:quarantined',
     'memory:read',
     'schedule:create',
+    'calendar:read',
+    'calendar:write',
     'approval:request',
   ]),
   // Model output derived from SYSTEM/USER content only. Can act, but cannot
@@ -92,6 +103,12 @@ const CAPABILITY_CEILING: Record<TrustLevel, ReadonlySet<Capability>> = {
     // guarantees a drop in trust can never grant a capability.
     'memory:write:quarantined',
     'memory:read',
+    // The agent may put something in the calendar — that is most of the
+    // point of having one — and `calendar.cancel` is held back by its
+    // own `minTrust: 'USER'` rather than by removing the capability,
+    // because removing it here would also stop the agent adding.
+    'calendar:read',
+    'calendar:write',
     // **No `schedule:create`.** Found by an M8 adversarial test and changed
     // here rather than papered over downstream: a schedule is a standing
     // grant of future authority, and DERIVED is model output, which is
@@ -110,6 +127,10 @@ const CAPABILITY_CEILING: Record<TrustLevel, ReadonlySet<Capability>> = {
     'fs:write:sandbox',
     'memory:write:quarantined',
     'memory:read',
+    // Read but not write: tool output is where foreign data most often
+    // arrives mislabelled, and a mislabelled calendar write is an entry
+    // in someone's week that nobody remembers making.
+    'calendar:read',
     'approval:request',
   ]),
   // §12.2 verbatim: no vault reads, no money, no outbound messages, no

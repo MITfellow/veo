@@ -173,7 +173,16 @@ describe('invariant 9: no tool name outside src/tools/', () => {
   it('keeps the built-in list itself in one file', () => {
     const registry = new ToolRegistry();
     registerBuiltins(registry);
-    expect(registry.list().map((t) => t.name)).toEqual(['clock.now', 'notes.read', 'notes.write']);
+    expect(registry.list().map((t) => t.name)).toEqual([
+      'clock.now',
+      'math.eval',
+      'notes.list',
+      'notes.read',
+      'notes.search',
+      'notes.write',
+      'time.convert',
+      'time.until',
+    ]);
 
     const withVault = new ToolRegistry();
     registerBuiltins(withVault, { vault: { list: async () => [] } as never });

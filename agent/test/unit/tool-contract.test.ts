@@ -127,7 +127,16 @@ describe('invariant 9: no tool name appears outside src/tools/', () => {
 describe('the built-in set', () => {
   it('registers without deps and stays within §20', () => {
     const registry = registerBuiltins(new ToolRegistry());
-    expect(registry.list().map((t) => t.name)).toEqual(['clock.now', 'notes.read', 'notes.write']);
+    expect(registry.list().map((t) => t.name)).toEqual([
+      'clock.now',
+      'math.eval',
+      'notes.list',
+      'notes.read',
+      'notes.search',
+      'notes.write',
+      'time.convert',
+      'time.until',
+    ]);
   });
 
   it('renders through the tool, which owns truncation', () => {

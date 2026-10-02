@@ -435,6 +435,23 @@ const PersonaUpdated = z.object({
   changed: z.array(z.string()),
 });
 
+/**
+ * S1's calendar. `cancelled` carries the id only: the event it closes
+ * is already in the log with everything else about it, and repeating
+ * the payload would let the two copies disagree.
+ */
+const CalendarAdded = z.object({
+  eventId: z.string(),
+  title: z.string(),
+  startsAt: z.number().int(),
+  endsAt: z.number().int(),
+  allDay: z.boolean(),
+  timezone: z.string(),
+  location: z.string().nullable(),
+  notes: z.string().nullable(),
+});
+const CalendarCancelled = z.object({ eventId: z.string() });
+
 const ScheduleCreated = z.object({
   scheduleId: z.string(),
   name: z.string(),
@@ -666,6 +683,9 @@ export const EVENT_SCHEMAS = {
 
   'schedule.fired': ScheduleFired,
   'schedule.missed': ScheduleMissed,
+  'calendar.added': CalendarAdded,
+  'calendar.cancelled': CalendarCancelled,
+
   'schedule.created': ScheduleCreated,
   'schedule.updated': ScheduleUpdated,
   'schedule.deleted': ScheduleDeleted,

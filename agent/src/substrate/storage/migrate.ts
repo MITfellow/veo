@@ -12,6 +12,7 @@ import { SCHEMA_010 } from './schema/010-calibration.js';
 import { SCHEMA_011 } from './schema/011-scheduling.js';
 import { SCHEMA_012 } from './schema/012-persona.js';
 import { SCHEMA_013 } from './schema/013-fact-subject-index.js';
+import { SCHEMA_014 } from './schema/014-calendar.js';
 
 /**
  * Schema migrations.
@@ -41,6 +42,7 @@ export const MIGRATIONS: readonly Migration[] = Object.freeze([
   { version: 11, name: 'scheduling', sql: SCHEMA_011 },
   { version: 12, name: 'persona', sql: SCHEMA_012 },
   { version: 13, name: 'fact-subject-index', sql: SCHEMA_013 },
+  { version: 14, name: 'calendar', sql: SCHEMA_014 },
 ]);
 
 export interface MigrationRow {

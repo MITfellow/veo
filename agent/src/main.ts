@@ -40,6 +40,7 @@ import { BiasAuditor } from './cognition/calibration/audit.js';
 import { GovernedProvider } from './orchestration/governed-model.js';
 import { OfflineProvider } from './providers/offline.js';
 import { OpenAiCompatibleProvider } from './providers/openai-compatible.js';
+import { CalendarStore } from './cognition/calendar/store.js';
 import { PersonaStore } from './cognition/persona/store.js';
 import { JobQueue } from './orchestration/queue.js';
 import { ScheduleStore, SCHEDULED_RUN } from './orchestration/schedule.js';
@@ -171,8 +172,12 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
   // only by the user through PUT /persona.
   const persona = new PersonaStore({ storage, events, clock });
 
+  // S1's calendar. Local by construction: an append to the same event
+  // log, no sync and no third-party credential anywhere beneath it.
+  const calendar = new CalendarStore({ storage, events, clock, ids });
+
   const registry = new ToolRegistry();
-  registerBuiltins(registry, { memory: memory.toolDeps() });
+  registerBuiltins(registry, { memory: memory.toolDeps(), calendar: { store: calendar } });
   registry.register(
     makeHistoryExpand(compactor, (runId) => {
       const row = storage.get<{ session_id: string }>(
@@ -360,6 +365,9 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
     // §25's user-facing surface: read the contract, amend it, see what it
     // caught. A constitution nobody can read is a prompt with extra steps.
     constitution,
+    // S1's calendar, on the same terms: a calendar the user cannot see
+    // and edit directly is one they cannot trust the agent with.
+    calendar,
     askBudget,
     auditor,
     // §28 + §27.

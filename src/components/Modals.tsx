@@ -3,6 +3,7 @@ import { useStore } from '../lib/context';
 import StoragePanel from './StoragePanel';
 import MemoryPanel from './MemoryPanel';
 import ConstitutionPanel from './ConstitutionPanel';
+import CalendarPanel from './CalendarPanel';
 import SchedulePanel from './SchedulePanel';
 import ProofPanel from './ProofPanel';
 import VaultPanel from './VaultPanel';
@@ -286,6 +287,8 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
           </Row>
 
           <ConstitutionPanel onNotice={setNotice} />
+
+          <CalendarPanel onNotice={setNotice} />
 
           <SchedulePanel onNotice={setNotice} />
 

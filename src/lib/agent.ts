@@ -135,6 +135,20 @@ export interface CalibrationView {
 
 export type CatchUp = 'fire-all' | 'fire-once' | 'skip';
 
+/** S1's calendar. The agent's own — there is no connector behind it. */
+export interface CalendarEventView {
+  id: string;
+  title: string;
+  startsAt: number;
+  endsAt: number;
+  allDay: boolean;
+  timezone: string;
+  location: string | null;
+  notes: string | null;
+  createdAt: number;
+  cancelledAt: number | null;
+}
+
 export interface ScheduleView {
   id: string;
   name: string;
@@ -548,6 +562,35 @@ export const agent = {
 
   async calibration(): Promise<CalibrationView> {
     return call('/calibration');
+  },
+
+  /* ────────────────────────── S1: the calendar ─────────────────────────── */
+
+  async calendar(window: { from?: number; to?: number; q?: string } = {}): Promise<{
+    events: CalendarEventView[];
+  }> {
+    const query = new URLSearchParams();
+    if (window.from !== undefined) query.set('from', String(window.from));
+    if (window.to !== undefined) query.set('to', String(window.to));
+    if (window.q !== undefined && window.q !== '') query.set('q', window.q);
+    const suffix = query.toString();
+    return call(`/calendar${suffix === '' ? '' : `?${suffix}`}`);
+  },
+
+  async addCalendarEvent(input: {
+    title: string;
+    startsAt: number;
+    endsAt?: number;
+    allDay?: boolean;
+    timezone?: string;
+    location?: string | null;
+    notes?: string | null;
+  }): Promise<CalendarEventView & { conflicts: Array<{ id: string; title: string }> }> {
+    return call('/calendar', { method: 'POST', body: JSON.stringify(input) });
+  },
+
+  async cancelCalendarEvent(id: string): Promise<void> {
+    await call(`/calendar/${id}`, { method: 'DELETE' });
   },
 
   /* ─────────────────── §28: schedules, jobs, degradation ───────────────── */

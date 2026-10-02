@@ -21,19 +21,32 @@
 import type { ToolRegistry } from '../capability/registry.js';
 import type { Vault } from '../security/vault.js';
 import { clockNow } from './clock-now.js';
-import { notesRead, notesWrite } from './notes.js';
+import { mathEval } from './math-eval.js';
+import { timeConvert, timeUntil } from './time.js';
+import { notesRead, notesWrite, notesList, notesSearch } from './notes.js';
+import { calendarTools, type CalendarToolDeps } from './calendar.js';
 import { makeVaultList } from './vault-list.js';
 import { memoryTools, type MemoryToolDeps } from './memory.js';
 
 export interface BuiltinDeps {
   vault?: Vault;
   memory?: MemoryToolDeps;
+  /** S1's calendar. Omitted → the calendar tools simply are not offered. */
+  calendar?: CalendarToolDeps;
 }
 
 export function registerBuiltins(registry: ToolRegistry, deps: BuiltinDeps = {}): ToolRegistry {
   registry.register(clockNow);
+  registry.register(mathEval);
+  registry.register(timeConvert);
+  registry.register(timeUntil);
   registry.register(notesRead);
   registry.register(notesWrite);
+  registry.register(notesList);
+  registry.register(notesSearch);
+  if (deps.calendar !== undefined) {
+    for (const tool of calendarTools(deps.calendar)) registry.register(tool);
+  }
   if (deps.vault !== undefined) registry.register(makeVaultList(deps.vault));
   if (deps.memory !== undefined) {
     for (const tool of memoryTools(deps.memory)) registry.register(tool);
@@ -41,4 +54,16 @@ export function registerBuiltins(registry: ToolRegistry, deps: BuiltinDeps = {})
   return registry;
 }
 
-export { clockNow, notesRead, notesWrite, makeVaultList, memoryTools };
+export {
+  clockNow,
+  mathEval,
+  timeConvert,
+  timeUntil,
+  notesRead,
+  notesWrite,
+  notesList,
+  notesSearch,
+  calendarTools,
+  makeVaultList,
+  memoryTools,
+};
