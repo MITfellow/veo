@@ -82,4 +82,4 @@ export const TEMPLATES: Readonly<Record<BlockName, Template>> = Object.freeze({
 });
 
 /** Bumped when any template changes. Travels in `context.assembled`. */
-export const TEMPLATE_SET_VERSION = 'tpl-2';
+export const TEMPLATE_SET_VERSION = 'tpl-3';

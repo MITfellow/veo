@@ -94,6 +94,7 @@ export interface GatherInput {
   principal: string;
   sessionId: string;
   trigger: string;
+  triggerDetail?: string;
   degradation: 'L0' | 'L1' | 'L2' | 'L3';
   /** Tool results from the previous step, not yet in the log as turns. */
   observations: readonly ForeignItem[];
@@ -159,6 +160,7 @@ export class Snapshotter {
         locale: this.deps.locale ?? 'en',
         device: this.deps.device ?? 'unknown',
         trigger: input.trigger,
+        ...(input.triggerDetail === undefined ? {} : { triggerDetail: input.triggerDetail }),
         degradation: input.degradation,
       },
       commitments: memory?.commitments(input.principal) ?? [],

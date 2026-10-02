@@ -131,6 +131,44 @@ export interface CalibrationView {
   };
 }
 
+/* ──────────────────────── §28: time and proactivity ─────────────────────── */
+
+export type CatchUp = 'fire-all' | 'fire-once' | 'skip';
+
+export interface ScheduleView {
+  id: string;
+  name: string;
+  kind: 'cron' | 'once';
+  spec: string;
+  timezone: string;
+  prompt: string;
+  catchUp: CatchUp;
+  enabled: boolean;
+  lastFiredAt: number | null;
+  nextFireAt: number | null;
+  fireCount: number;
+  /** Slots that passed while nothing was running. Shown, never hidden. */
+  missedCount: number;
+}
+
+export interface JobView {
+  id: string;
+  kind: string;
+  status: 'pending' | 'leased' | 'done' | 'failed' | 'dead';
+  attempts: number;
+  maxAttempts: number;
+  runAfter: number;
+  lastError: string | null;
+  scheduleId: string | null;
+  enqueuedAt: number;
+}
+
+export interface DegradationView {
+  level: 'L0' | 'L1' | 'L2' | 'L3' | 'L4';
+  meaning: string;
+  signals: Array<{ signal: string; level: string; detail: string; since: number }>;
+}
+
 export interface AgentSession {
   id: string;
   title: string | null;
@@ -312,6 +350,41 @@ export const agent = {
 
   async calibration(): Promise<CalibrationView> {
     return call('/calibration');
+  },
+
+  /* ─────────────────── §28: schedules, jobs, degradation ───────────────── */
+
+  async schedules(): Promise<{ schedules: ScheduleView[] }> {
+    return call('/schedules');
+  },
+
+  async createSchedule(input: {
+    name: string;
+    spec: string;
+    prompt: string;
+    timezone?: string;
+    catchUp?: CatchUp;
+  }): Promise<ScheduleView> {
+    return call('/schedules', { method: 'POST', body: JSON.stringify(input) });
+  },
+
+  async updateSchedule(
+    id: string,
+    patch: { enabled?: boolean; catchUp?: CatchUp; timezone?: string; spec?: string },
+  ): Promise<ScheduleView> {
+    return call(`/schedules/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+  },
+
+  async deleteSchedule(id: string): Promise<void> {
+    await call(`/schedules/${id}`, { method: 'DELETE' });
+  },
+
+  async jobs(): Promise<{ counts: Record<string, number>; jobs: JobView[] }> {
+    return call('/jobs');
+  },
+
+  async degradation(): Promise<DegradationView> {
+    return call('/degradation');
   },
 
   async approvals(): Promise<PendingApproval[]> {

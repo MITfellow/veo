@@ -1,7 +1,7 @@
 scenario: tool-dense
 window: 3000
-policy: ctx-1/tpl-2
-digest: 9e2e6bd70fb3766a
+policy: ctx-1/tpl-3
+digest: 3f880ad8016356c9
 total_tokens: 994
 truncated: false
 

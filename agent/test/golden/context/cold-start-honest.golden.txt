@@ -1,7 +1,7 @@
 scenario: cold-start-honest
 window: 4000
-policy: ctx-1/tpl-2
-digest: a7e8daad1e19b658
+policy: ctx-1/tpl-3
+digest: 8101837ef9c3d01b
 total_tokens: 1152
 truncated: false
 

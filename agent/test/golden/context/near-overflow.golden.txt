@@ -1,7 +1,7 @@
 scenario: near-overflow
 window: 2400
-policy: ctx-1/tpl-2
-digest: c56a15ce915b8f30
+policy: ctx-1/tpl-3
+digest: 3d88f02bcf65cd49
 total_tokens: 2374
 truncated: true
 

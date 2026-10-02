@@ -365,6 +365,69 @@ const ArtifactCreated = z.object({
 const ScheduleFired = z.object({ scheduleId: z.string(), scheduledFor: z.number().int() });
 const ScheduleMissed = z.object({ scheduleId: z.string(), scheduledFor: z.number().int(), policy: z.string() });
 
+/**
+ * §28's queue and scheduler, as events (M8, decision 033).
+ *
+ * A job's *life* is in the log — enqueued, started, succeeded, failed,
+ * dead-lettered — and the `jobs` table is a projection of it. A **lease is
+ * deliberately not here**: it is a sixty-second claim by a process that may
+ * already be dead, and an append-only log of claims that are false moments
+ * later is not a record of anything. On rebuild every lease is empty, which
+ * is correct, because a rebuild implies a restart and a restart voids every
+ * claim.
+ */
+const JobEnqueued = z.object({
+  jobId: z.string(),
+  kind: z.string(),
+  payload: z.record(z.unknown()),
+  runAfter: z.number().int(),
+  priority: z.number().int(),
+  idempotencyKey: z.string().nullable(),
+  scheduleId: z.string().nullable(),
+});
+const JobStarted = z.object({ jobId: z.string(), attempt: z.number().int().positive() });
+const JobSucceeded = z.object({ jobId: z.string(), attempt: z.number().int().positive(), ms: z.number().int().nonnegative() });
+const JobFailed = z.object({
+  jobId: z.string(),
+  attempt: z.number().int().positive(),
+  error: z.string(),
+  retryAt: z.number().int().nullable(),
+});
+const JobDeadLettered = z.object({ jobId: z.string(), attempts: z.number().int().positive(), error: z.string() });
+
+const ScheduleCreated = z.object({
+  scheduleId: z.string(),
+  name: z.string(),
+  spec: z.string(),
+  timezone: z.string(),
+  kind: z.enum(['cron', 'once']),
+  payload: z.record(z.unknown()),
+  catchUp: z.enum(['fire-all', 'fire-once', 'skip']),
+  nextFireAt: z.number().int().nullable(),
+});
+const ScheduleUpdated = z.object({
+  scheduleId: z.string(),
+  changed: z.array(z.string()),
+  spec: z.string(),
+  timezone: z.string(),
+  catchUp: z.enum(['fire-all', 'fire-once', 'skip']),
+  enabled: z.boolean(),
+  nextFireAt: z.number().int().nullable(),
+});
+const ScheduleDeleted = z.object({ scheduleId: z.string() });
+
+/**
+ * §27: "Each transition is an event. Silent degradation is forbidden."
+ * Transitions only — a flapping embedder must not be able to flood the log.
+ */
+const DegradationChanged = z.object({
+  from: z.enum(['L0', 'L1', 'L2', 'L3', 'L4']),
+  to: z.enum(['L0', 'L1', 'L2', 'L3', 'L4']),
+  signal: z.string(),
+  detail: z.string(),
+  active: z.array(z.string()),
+});
+
 const CalibrationProbed = z.object({ factId: z.string().nullable(), question: z.string() });
 const CalibrationAnswered = z.object({
   factId: z.string().nullable(),
@@ -563,6 +626,17 @@ export const EVENT_SCHEMAS = {
 
   'schedule.fired': ScheduleFired,
   'schedule.missed': ScheduleMissed,
+  'schedule.created': ScheduleCreated,
+  'schedule.updated': ScheduleUpdated,
+  'schedule.deleted': ScheduleDeleted,
+
+  'job.enqueued': JobEnqueued,
+  'job.started': JobStarted,
+  'job.succeeded': JobSucceeded,
+  'job.failed': JobFailed,
+  'job.deadlettered': JobDeadLettered,
+
+  'degradation.changed': DegradationChanged,
 
   'calibration.probed': CalibrationProbed,
   'calibration.answered': CalibrationAnswered,

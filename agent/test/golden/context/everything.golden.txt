@@ -1,7 +1,7 @@
 scenario: everything
 window: 4000
-policy: ctx-1/tpl-2
-digest: f6bfa7a9c1d0054b
+policy: ctx-1/tpl-3
+digest: 1d061164f0886702
 total_tokens: 1228
 truncated: false
 

@@ -1,7 +1,7 @@
 scenario: foreign-present
 window: 4000
-policy: ctx-1/tpl-2
-digest: d33346fd614d5288
+policy: ctx-1/tpl-3
+digest: a7d17a826cab7e7f
 total_tokens: 698
 truncated: false
 

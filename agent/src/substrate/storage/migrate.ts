@@ -9,6 +9,7 @@ import { SCHEMA_007 } from './schema/007-memory.js';
 import { SCHEMA_008 } from './schema/008-fact-principal.js';
 import { SCHEMA_009 } from './schema/009-constitution.js';
 import { SCHEMA_010 } from './schema/010-calibration.js';
+import { SCHEMA_011 } from './schema/011-scheduling.js';
 
 /**
  * Schema migrations.
@@ -35,6 +36,7 @@ export const MIGRATIONS: readonly Migration[] = Object.freeze([
   { version: 8, name: 'fact-principal', sql: SCHEMA_008 },
   { version: 9, name: 'constitution', sql: SCHEMA_009 },
   { version: 10, name: 'calibration', sql: SCHEMA_010 },
+  { version: 11, name: 'scheduling', sql: SCHEMA_011 },
 ]);
 
 export interface MigrationRow {

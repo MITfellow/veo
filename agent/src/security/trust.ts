@@ -92,7 +92,14 @@ const CAPABILITY_CEILING: Record<TrustLevel, ReadonlySet<Capability>> = {
     // guarantees a drop in trust can never grant a capability.
     'memory:write:quarantined',
     'memory:read',
-    'schedule:create',
+    // **No `schedule:create`.** Found by an M8 adversarial test and changed
+    // here rather than papered over downstream: a schedule is a standing
+    // grant of future authority, and DERIVED is model output, which is
+    // downstream of every fenced web page the agent has ever read. The
+    // agent may *ask* (`approval:request`) and the user may create one;
+    // the agent cannot hand itself a recurring slot. Dropping a capability
+    // from DERIVED keeps the nesting property — DERIVED is still a subset
+    // of USER — so a drop in trust still cannot grant anything.
     'approval:request',
   ]),
   // A trusted, allowlisted tool's output. Narrower than DERIVED on writes

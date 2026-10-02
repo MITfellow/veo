@@ -1,7 +1,7 @@
 scenario: pinned
 window: 2000
-policy: ctx-1/tpl-2
-digest: dc6c83161f2ec571
+policy: ctx-1/tpl-3
+digest: db5ac6c3c4898034
 total_tokens: 700
 truncated: false
 

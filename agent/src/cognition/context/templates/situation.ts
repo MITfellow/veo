@@ -22,7 +22,7 @@ const DEGRADATION_NOTE: Record<string, string> = {
  */
 export const SITUATION: Template = {
   name: 'situation',
-  version: 'situation-1',
+  version: 'situation-2',
   kind: 'system',
   header: 'Right now:',
   render(snapshot) {
@@ -30,7 +30,14 @@ export const SITUATION: Template = {
     const items: RenderedItem[] = [
       { id: 'situation:time', text: `- Time: ${new Date(s.now).toISOString()} (${s.timezone})` },
       { id: 'situation:locale', text: `- Locale: ${s.locale}   Device: ${s.device}` },
-      { id: 'situation:trigger', text: `- This run was triggered by: ${s.trigger}` },
+      {
+        id: 'situation:trigger',
+        text:
+          s.triggerDetail === undefined || s.triggerDetail === ''
+            ? `- This run was triggered by: ${s.trigger}`
+            : `- This run was triggered by: ${s.trigger} (${s.triggerDetail}). Nobody is` +
+              ` necessarily waiting: say why you are speaking, and be brief.`,
+      },
     ];
     if (s.sessionTitle !== undefined && s.sessionTitle !== '') {
       items.push({ id: 'situation:title', text: `- Session: ${s.sessionTitle}` });

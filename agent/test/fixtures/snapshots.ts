@@ -167,6 +167,35 @@ export const SCENARIOS: Record<string, () => StateSnapshot> = {
     }),
 
   /**
+   * 16. A run nobody asked for, right now (M8). The Situation block has to
+   * carry the whole of "why am I hearing from you": the trigger, the
+   * schedule's name, and the fact that there may be no one at the keyboard.
+   */
+  'scheduled-run': () => {
+    const base = snap({
+      constitutionDoc: constitutionView(),
+      identity: {
+        text: 'Ara, 34, engineer in Lisbon. Direct. Dislikes hedging.',
+        updatedAt: T0 - DAY,
+        factCount: 148,
+      },
+      commitments: [{ id: 'cm-1', text: 'Send Priya the draft.', dueAt: T0 + 2 * DAY, madeAt: T0 - DAY }],
+      memories: [memory()],
+      conversation: [],
+      profile: { factCount: 148, meanConfidence: 0.78, sessionsObserved: 92 },
+    });
+    return {
+      ...base,
+      situation: {
+        ...base.situation,
+        trigger: 'schedule',
+        triggerDetail: 'your schedule "Morning briefing"',
+        sessionTitle: 'Morning briefing',
+      },
+    };
+  },
+
+  /**
    * 15. §24.4: a thin profile, honestly. The identity block refuses to
    * pretend and the calibration block says what is unknown.
    */

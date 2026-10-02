@@ -1,7 +1,7 @@
 scenario: constitution-default
 window: 4000
-policy: ctx-1/tpl-2
-digest: d6b224f948deb48d
+policy: ctx-1/tpl-3
+digest: 11ac8eb4626373a8
 total_tokens: 1062
 truncated: false
 

@@ -3848,3 +3848,168 @@
   color: var(--text-dim);
   margin: 6px 0;
 }
+
+/* ─────────────────── §28 — standing instructions (M8) ────────────────────
+ *
+ * Its own class prefix, deliberately. Borrowing another panel's names once
+ * put two `.mem-tabs` on the same screen and broke every memory e2e test on
+ * an ambiguous locator — shared looks are fine, shared hooks are not.
+ */
+.sch-note {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.sch-section {
+  margin: 14px 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.sch-empty {
+  padding: 12px;
+  border: 1px dashed var(--hairline);
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* The ladder is a warning, not decoration: it says what the agent cannot
+ * currently do, which is the one thing a degraded system must not hide. */
+.sch-degraded {
+  margin-bottom: 10px;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--warn, #c9821a) 45%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--warn, #c9821a) 10%, transparent);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.sch-signal {
+  margin-top: 3px;
+  color: var(--text-dim);
+}
+
+.sch-list {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.sch-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.sch-row.is-off {
+  opacity: 0.6;
+}
+
+.sch-row.is-dead {
+  border-color: color-mix(in srgb, var(--danger, #d7373f) 40%, var(--hairline));
+}
+
+.sch-main {
+  min-width: 0;
+}
+
+.sch-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sch-prompt {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.sch-when {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.sch-stats {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.sch-missed {
+  color: var(--warn, #c9821a);
+}
+
+.sch-actions {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.sch-add {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.sch-input,
+.sch-select {
+  padding: 7px 9px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.sch-btn {
+  padding: 6px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.sch-btn:hover {
+  background: var(--hover, color-mix(in srgb, var(--text) 6%, transparent));
+}
+
+.sch-btn.is-primary {
+  border-color: transparent;
+  background: var(--accent, #0b84ff);
+  color: #fff;
+}
+
+.sch-btn.is-danger {
+  color: var(--danger, #d7373f);
+}

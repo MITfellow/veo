@@ -141,6 +141,14 @@ export interface Situation {
   locale: string;
   device: string;
   trigger: string;
+  /**
+   * Why *this* run, when the trigger alone does not say (M8).
+   *
+   * A scheduled run that only knows it was "triggered by: schedule" cannot
+   * tell the person why it is talking to them at 9am. Naming the schedule
+   * is the difference between a notification and an explanation.
+   */
+  triggerDetail?: string;
   degradation: 'L0' | 'L1' | 'L2' | 'L3';
   sessionTitle?: string;
 }

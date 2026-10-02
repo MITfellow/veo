@@ -40,6 +40,10 @@ import { BiasAuditor } from './cognition/calibration/audit.js';
 import { GovernedProvider } from './orchestration/governed-model.js';
 import { OfflineProvider } from './providers/offline.js';
 import { OpenAiCompatibleProvider } from './providers/openai-compatible.js';
+import { JobQueue } from './orchestration/queue.js';
+import { ScheduleStore, SCHEDULED_RUN } from './orchestration/schedule.js';
+import { Worker } from './orchestration/worker.js';
+import { Degradation } from './orchestration/degradation.js';
 import { DiskFileStore } from './adapters/files.js';
 import { NodeNet } from './adapters/net.js';
 import type { ModelProvider } from './substrate/ports.js';
@@ -215,6 +219,86 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
     dailyBudget: DEFAULT_DAILY_BUDGET,
   });
 
+  /* ── L5: time and proactivity (M8) ─────────────────────────────────────── */
+  // §28's promise is that proactive behaviour needs *zero kernel changes*:
+  // a scheduled run is an ordinary run whose trigger happens to be
+  // 'schedule'. The handler below is the whole of it.
+  const ladder = new Degradation({ events, clock, principal: PRINCIPAL });
+  if (apiKey === undefined || apiKey === '') {
+    // Honest from the first second: with no key the agent is on its
+    // offline fallback, and §27 forbids being quietly dumber than
+    // yesterday without saying so.
+    ladder.report('model', 'no ARISH_API_KEY is configured; answering from the offline fallback');
+  }
+
+  const queue = new JobQueue({
+    storage,
+    events,
+    clock,
+    ids,
+    leaseMs: substrate.config.queue.leaseMs,
+    maxAttempts: substrate.config.queue.maxAttempts,
+    baseBackoffMs: substrate.config.queue.baseBackoffMs,
+  });
+  const schedules = new ScheduleStore({ storage, events, clock, ids, queue });
+
+  /** How many interactive runs are in flight. Background work waits. */
+  let interactive = 0;
+
+  const worker = new Worker({
+    queue,
+    schedules,
+    clock,
+    logger,
+    busy: () => interactive > 0,
+    pollIntervalMs: substrate.config.queue.pollIntervalMs,
+    handlers: {
+      [SCHEDULED_RUN]: async (job) => {
+        const prompt = typeof job.payload.prompt === 'string' ? job.payload.prompt : '';
+        const scheduleId = typeof job.payload.scheduleId === 'string' ? job.payload.scheduleId : '';
+        const schedule = scheduleId === '' ? null : schedules.get(scheduleId);
+
+        // One session per schedule, reused, so a recurring briefing reads
+        // as a continuing thread rather than a pile of orphan sessions.
+        const sessionId = `ses-schedule-${scheduleId}`;
+        const existing = storage.get<{ id: string }>('SELECT id FROM sessions WHERE id = ?', [sessionId]);
+        if (existing === undefined) {
+          events.append({
+            type: 'session.created',
+            principal: job.principal,
+            trust: 'USER',
+            sessionId,
+            payload: { title: schedule?.name ?? 'Scheduled' },
+          });
+        }
+
+        events.append({
+          type: 'message.user',
+          principal: job.principal,
+          trust: 'USER',
+          sessionId,
+          payload: { text: prompt },
+        });
+
+        await memory.prime(job.principal, sessionId, prompt).catch(() => undefined);
+        const outcome = await runner.run({
+          sessionId,
+          principal: job.principal,
+          trigger: 'schedule',
+          // So the context can say *why* it is talking at 9am, which is
+          // the difference between an explanation and a notification.
+          triggerDetail: schedule === null ? 'a schedule' : `your schedule "${schedule.name}"`,
+        });
+        if (outcome.status === 'failed') {
+          // Thrown, not swallowed: the queue's retry and dead-letter path
+          // is the only thing standing between a flaky model and a
+          // briefing that silently never arrives.
+          throw new Error(`scheduled run ${outcome.runId} failed: ${outcome.reason ?? 'unknown'}`);
+        }
+      },
+    },
+  });
+
   /* ── L6: interface ─────────────────────────────────────────────────────── */
   const token = options.token ?? process.env.ARISH_TOKEN ?? ids.token(24);
   const api = new Api({
@@ -238,7 +322,20 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
     constitution,
     askBudget,
     auditor,
+    // §28 + §27.
+    schedules,
+    queue,
+    ladder,
+    degradation: () => ladder.current(),
+    onRunStart: () => {
+      interactive += 1;
+    },
+    onRunEnd: () => {
+      interactive = Math.max(0, interactive - 1);
+    },
   });
+
+  worker.start();
 
   const server = api.server();
   await new Promise<void>((ready) => server.listen(port, '0.0.0.0', ready));
@@ -258,6 +355,8 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
     port: actualPort,
     token,
     close: async () => {
+      // §28's order: refuse new work, finish what is in hand, then go.
+      await worker.stop();
       await new Promise<void>((done) => server.close(() => done()));
       substrate.close();
     },

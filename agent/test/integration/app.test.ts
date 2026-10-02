@@ -63,10 +63,22 @@ async function drain(runId: string): Promise<Array<{ event: string; data: string
 }
 
 describe('the agent as it actually ships', () => {
-  it('is up before anyone authenticates', async () => {
+  it('is up before anyone authenticates, and says which mode it is in', async () => {
     const response = await fetch(`${base}/health`);
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ status: 'ok', degradation: 'L0' });
+    // L2, not L0: the test environment has no API key, so the agent is
+    // answering from its offline fallback. §27 forbids being quietly
+    // dumber than yesterday, and "quietly" includes a health endpoint
+    // that reports full capability while the real model is absent.
+    expect(await response.json()).toMatchObject({ status: 'ok', degradation: 'L2' });
+
+    // `/degradation` is authenticated — what the agent cannot currently do
+    // is a fact about the user's install, not public weather.
+    const ladder = await (await fetch(`${base}/degradation`, { headers: auth() })).json();
+    expect(ladder).toMatchObject({ level: 'L2' });
+    expect((ladder as { signals: Array<{ detail: string }> }).signals[0]!.detail).toContain(
+      'ARISH_API_KEY',
+    );
   });
 
   it('refuses a request without the token', async () => {

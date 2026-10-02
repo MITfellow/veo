@@ -1,7 +1,7 @@
 scenario: degraded
 window: 4000
-policy: ctx-1/tpl-2
-digest: 65d34ed4605c975d
+policy: ctx-1/tpl-3
+digest: e4f712e16bdeec40
 total_tokens: 561
 truncated: false
 

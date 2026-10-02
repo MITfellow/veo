@@ -25,6 +25,11 @@ import { CHECKS } from '../cognition/constitution/checks.js';
 import type { AskBudget } from '../cognition/calibration/probe.js';
 import type { BiasAuditor } from '../cognition/calibration/audit.js';
 import { report as calibrationReport } from '../cognition/calibration/confidence.js';
+import type { Schedule, ScheduleStore } from '../orchestration/schedule.js';
+import { ScheduleParseError } from '../orchestration/schedule.js';
+import type { JobQueue } from '../orchestration/queue.js';
+import { LEVEL_MEANING, type Degradation } from '../orchestration/degradation.js';
+import { CronParseError } from '../orchestration/cron.js';
 import { factLine } from '../cognition/memory/store.js';
 import type { Fact } from '../cognition/memory/types.js';
 
@@ -63,6 +68,20 @@ export interface ApiDeps {
   askBudget?: AskBudget;
   /** §24.3's bias audit. */
   auditor?: BiasAuditor;
+  /**
+   * Called when an interactive run starts and ends (M8).
+   *
+   * §28: "interactive runs always have strict priority over background
+   * jobs". The worker implements that by not leasing while one is in
+   * flight, and this is how it finds out.
+   */
+  onRunStart?: () => void;
+  onRunEnd?: () => void;
+  /** §28's scheduler and queue (M8). Omitted → those routes 404. */
+  schedules?: ScheduleStore;
+  queue?: JobQueue;
+  /** §27's ladder. The `degradation` function above reads from it. */
+  ladder?: Degradation;
 }
 
 /** §29: `{ decision, scope }`. Validated like every other boundary. */
@@ -103,6 +122,40 @@ const MemoryQuery = z.object({
   pinned: z.enum(['true', 'false']).optional(),
   limit: z.coerce.number().int().min(1).max(500).default(100),
 });
+
+const CreateScheduleBody = z.object({
+  name: z.string().min(1).max(120),
+  /** A 5-field cron spec, or an instant for a one-shot. */
+  spec: z.string().min(1).max(120),
+  timezone: z.string().max(64).optional(),
+  prompt: z.string().min(1).max(2000),
+  catchUp: z.enum(['fire-all', 'fire-once', 'skip']).optional(),
+  kind: z.enum(['cron', 'once']).optional(),
+});
+
+const UpdateScheduleBody = z.object({
+  spec: z.string().min(1).max(120).optional(),
+  timezone: z.string().max(64).optional(),
+  catchUp: z.enum(['fire-all', 'fire-once', 'skip']).optional(),
+  enabled: z.boolean().optional(),
+});
+
+function scheduleView(schedule: Schedule) {
+  return {
+    id: schedule.id,
+    name: schedule.name,
+    kind: schedule.kind,
+    spec: schedule.spec,
+    timezone: schedule.timezone,
+    prompt: typeof schedule.payload.prompt === 'string' ? schedule.payload.prompt : '',
+    catchUp: schedule.catchUp,
+    enabled: schedule.enabled,
+    lastFiredAt: schedule.lastFiredAt,
+    nextFireAt: schedule.nextFireAt,
+    fireCount: schedule.fireCount,
+    missedCount: schedule.missedCount,
+  };
+}
 
 export class Api {
   private readonly routes: Route[] = [];
@@ -816,7 +869,161 @@ export class Api {
         bias: auditor.run(principal, { write: false }),
       });
     });
+
+    /* ────────────────── §28 — schedules, jobs, degradation ────────────── */
+
+    // §29's endpoint list predates the scheduler and does not name these
+    // (decision 035). They follow the same shape as everything else it does
+    // name: bearer auth, zod at the boundary, `cache-control: no-store`.
+
+    const schedules = this.deps.schedules;
+    const queue = this.deps.queue;
+
+    this.add('GET', '/schedules', ({ res, principal }) => {
+      if (schedules === undefined) return json(res, 404, { error: 'no_scheduler' });
+      json(res, 200, { schedules: schedules.list(principal).map(scheduleView) });
+    });
+
+    this.add('POST', '/schedules', async ({ res, body, principal }) => {
+      if (schedules === undefined) return json(res, 404, { error: 'no_scheduler' });
+      const parsed = CreateScheduleBody.safeParse(await body());
+      if (!parsed.success) {
+        return json(res, 400, { error: 'invalid_schedule', detail: parsed.error.issues });
+      }
+      try {
+        const created = schedules.create(principal, {
+          name: parsed.data.name,
+          spec: parsed.data.spec,
+          payload: { prompt: parsed.data.prompt },
+          ...(parsed.data.timezone === undefined ? {} : { timezone: parsed.data.timezone }),
+          ...(parsed.data.catchUp === undefined ? {} : { catchUp: parsed.data.catchUp }),
+          ...(parsed.data.kind === undefined ? {} : { kind: parsed.data.kind }),
+        });
+        json(res, 201, scheduleView(created));
+      } catch (error) {
+        // A bad cron spec is the user's typo, not a server fault. 400 with
+        // the parser's own sentence — which already explains the interval
+        // floor when that is what was wrong.
+        if (error instanceof CronParseError || error instanceof ScheduleParseError) {
+          return json(res, 400, { error: 'invalid_spec', detail: error.message });
+        }
+        throw error;
+      }
+    });
+
+    this.add('PATCH', '/schedules/:id', async ({ res, params, body, principal }) => {
+      if (schedules === undefined) return json(res, 404, { error: 'no_scheduler' });
+      const parsed = UpdateScheduleBody.safeParse(await body());
+      if (!parsed.success) {
+        return json(res, 400, { error: 'invalid_schedule', detail: parsed.error.issues });
+      }
+      try {
+        // Spread the present keys only: `exactOptionalPropertyTypes` draws
+        // a real distinction between "not given" and "given as undefined",
+        // and so does a PATCH.
+        const patch = Object.fromEntries(
+          Object.entries(parsed.data).filter(([, value]) => value !== undefined),
+        );
+        const updated = schedules.update(principal, params.id ?? '', patch);
+        if (updated === null) return json(res, 404, { error: 'no_such_schedule' });
+        json(res, 200, scheduleView(updated));
+      } catch (error) {
+        if (error instanceof CronParseError || error instanceof ScheduleParseError) {
+          return json(res, 400, { error: 'invalid_spec', detail: error.message });
+        }
+        throw error;
+      }
+    });
+
+    this.add('DELETE', '/schedules/:id', ({ res, params, principal }) => {
+      if (schedules === undefined) return json(res, 404, { error: 'no_scheduler' });
+      const removed = schedules.delete(principal, params.id ?? '');
+      json(res, removed ? 200 : 404, removed ? { deleted: params.id } : { error: 'no_such_schedule' });
+    });
+
+    this.add('GET', '/jobs', ({ res, url }) => {
+      if (queue === undefined) return json(res, 404, { error: 'no_queue' });
+      const status = url.searchParams.get('status');
+      json(res, 200, {
+        counts: queue.counts(),
+        jobs: queue
+          .list(status === null ? {} : { status: status as 'pending' })
+          .map((job) => ({
+            id: job.id,
+            kind: job.kind,
+            status: job.status,
+            attempts: job.attempts,
+            maxAttempts: job.maxAttempts,
+            runAfter: job.runAfter,
+            lastError: job.lastError,
+            scheduleId: job.scheduleId,
+            enqueuedAt: job.enqueuedAt,
+          })),
+      });
+    });
+
+    this.add('GET', '/jobs/dead-letter', ({ res }) => {
+      if (queue === undefined) return json(res, 404, { error: 'no_queue' });
+      json(res, 200, { dead: queue.deadLetters() });
+    });
+
+    this.add('POST', '/jobs/:id/replay', ({ res, params }) => {
+      if (queue === undefined) return json(res, 404, { error: 'no_queue' });
+      const jobId = queue.replay(params.id ?? '');
+      if (jobId === null) return json(res, 404, { error: 'no_such_dead_letter' });
+      json(res, 202, { jobId });
+    });
+
+    /**
+     * §29's `GET /events` — the audit surface, filterable.
+     *
+     * Listed in §29 and not built until now because nothing needed it.
+     * M8 does: "did my agent do anything while I was asleep?" is a
+     * question about the log, and the log is the only honest answer. The
+     * payloads go through the redactor on the way out, like the SSE
+     * stream does.
+     */
+    this.add('GET', '/events', ({ res, url }) => {
+      const types = (url.searchParams.get('types') ?? '')
+        .split(',')
+        .map((t) => t.trim())
+        .filter((t) => t !== '');
+      const limit = Math.min(Number(url.searchParams.get('limit') ?? '100'), 500);
+      const all = this.deps.events.read({
+        ...(types.length > 0 ? { types: types as never } : {}),
+        ...(url.searchParams.has('sessionId')
+          ? { sessionId: url.searchParams.get('sessionId') as string }
+          : {}),
+        ...(url.searchParams.has('runId') ? { runId: url.searchParams.get('runId') as string } : {}),
+      });
+      const page = all.slice(-limit);
+      json(res, 200, {
+        total: all.length,
+        events: page.map((event) => ({
+          seq: event.seq,
+          id: event.id,
+          ts: event.ts,
+          type: event.type,
+          trust: event.trust,
+          sessionId: event.sessionId,
+          runId: event.runId,
+          payload: this.deps.redactor?.redact(event.payload) ?? event.payload,
+        })),
+      });
+    });
+
+    this.add('GET', '/degradation', ({ res }) => {
+      const ladder = this.deps.ladder;
+      if (ladder === undefined) {
+        // Honest default rather than a 404: a system with no ladder wired
+        // is at L0 by definition, and saying so is cheaper than making
+        // every client handle a missing endpoint.
+        return json(res, 200, { level: 'L0', meaning: LEVEL_MEANING.L0, signals: [] });
+      }
+      json(res, 200, ladder.state());
+    });
   }
+
 
   /* ───────────────────────────── live plumbing ──────────────────────────── */
 
@@ -824,6 +1031,7 @@ export class Api {
 
   private track(runId: string, promise: Promise<RunOutcome>): void {
     this.inflight.set(runId, promise);
+    this.deps.onRunStart?.();
     void promise
       .catch((err: unknown) => {
         this.deps.logger.error('run threw', { runId, message: (err as Error).message });
@@ -831,6 +1039,7 @@ export class Api {
       })
       .finally(() => {
         this.inflight.delete(runId);
+        this.deps.onRunEnd?.();
       });
   }
 

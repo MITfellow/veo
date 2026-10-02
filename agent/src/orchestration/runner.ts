@@ -87,6 +87,8 @@ export interface RunRequest {
   sessionId: string;
   principal: string;
   trigger: 'user' | 'schedule' | 'resume' | 'system';
+  /** Human-readable "why now", e.g. a schedule's name (M8). */
+  triggerDetail?: string;
   limits?: Partial<RunLimits>;
   /** Persona / constitution text. M5 builds this properly. */
   system?: string;
@@ -319,6 +321,7 @@ export class Runner {
       type: 'run.started',
       payload: {
         trigger: request.trigger,
+      ...(request.triggerDetail === undefined ? {} : { triggerDetail: request.triggerDetail }),
         sessionId: request.sessionId,
         budget: {
           steps: limits.maxSteps,
@@ -902,6 +905,7 @@ export class Runner {
       sessionId: request.sessionId,
       runId,
       trigger: request.trigger,
+      ...(request.triggerDetail === undefined ? {} : { triggerDetail: request.triggerDetail }),
       degradation: (this.deps.degradation?.() ?? 'L0') as 'L0' | 'L1' | 'L2' | 'L3',
       observations: foreign,
       fallbackTrust: request.trigger === 'user' ? 'USER' : 'SYSTEM',
