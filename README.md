@@ -1,19 +1,48 @@
 # Veo
 
-A complete, installable messaging app for the web, built with React + TypeScript + Vite,
-styled after macOS Messages (Tahoe). There is no backend and no account: every conversation,
-photo and file lives in IndexedDB on your own device, and the people you talk to reply on
-their own through a small persona-driven engine.
+A complete, installable messaging app for the web — and the home of a personal agent
+that actually runs.
+
+Two halves of one product:
+
+- **Veo**, the client. React + TypeScript + Vite, styled after macOS Messages (Tahoe).
+  No account, no backend: conversations, photos and files live in IndexedDB on your
+  own device, and the people you talk to reply through a small persona-driven engine.
+- **[`agent/`](agent/)** — **ARISH**, a durable personal agent. An append-only event
+  log in SQLite that *is* the state, a trust lattice that decides what untrusted
+  content is allowed to cause, an approval gate in front of anything irreversible,
+  and a context assembler that fits two hundred turns into a budget. It is spoken to
+  through the conversation named **Agent**, like anyone else in the app.
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173
+npm run dev        # both: the app on :5173, the agent on :7777
+npm run dev:web    # just the client
+npm run agent      # just the agent
 npm run build      # production bundle in dist/
 npm run preview    # serve the built bundle (service worker active)
-npm test           # 129 unit + integration tests
-npm run typecheck  # tsc --build
+npm test           # 140 client tests
+npm run test:agent # 579 agent tests
+npm run typecheck  # tsc --build, both halves
 npm run lint       # oxlint
+npm run e2e        # 91 Playwright tests, including the live agent
 ```
+
+### Giving the agent a model
+
+With no configuration it starts anyway and says, truthfully, that it has no language
+model — while still answering what it genuinely can by calling real tools through the
+real capability gate. To give it words:
+
+```bash
+export ARISH_API_KEY=sk-...            # any OpenAI-compatible endpoint
+export ARISH_BASE_URL=https://api.openai.com/v1   # optional
+export ARISH_MODEL=gpt-4o-mini                    # optional
+npm run dev
+```
+
+The browser never holds that key or the agent's bearer token: the dev server proxies
+`/agent/*` and attaches the token on the way through.
 
 ---
 

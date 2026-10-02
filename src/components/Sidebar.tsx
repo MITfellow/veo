@@ -1,5 +1,6 @@
 import React, { useCallback, useDeferredValue, useMemo, useRef, useState } from 'react';
 import { useStore } from '../lib/context';
+import { isAgentChat } from '../lib/agent-chat';
 import type { Chat, Contact, Message } from '../types';
 import { TAPBACKS } from '../types';
 import { listStamp } from '../lib/time';
@@ -337,7 +338,7 @@ export function Sidebar({
           <div className="empty-list">No results for “{query}”</div>
         )}
         {unreadOnly && rows.length === 0 && <div className="empty-list">No unread messages</div>}
-        {!query && !unreadOnly && state.chats.length === 0 && (
+        {!query && !unreadOnly && state.chats.every((c) => isAgentChat(c, state.contacts)) && (
           <div className="empty-first-run">
             <div className="efr-glyph" aria-hidden="true">
               <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.4">

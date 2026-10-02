@@ -7,12 +7,15 @@ export type Action =
   | { type: 'push'; message: Message }
   | { type: 'status'; id: string; status: Message['status']; readAt?: number }
   | { type: 'typing'; chatId: string; typing: boolean; by?: string }
+  | { type: 'stream'; id: string; text: string; done?: boolean }
+  | { type: 'approval-outcome'; approvalId: string; outcome: 'granted' | 'denied' | 'expired' }
   | { type: 'react'; messageId: string; tapback: Tapback; by: string }
   | { type: 'unsend'; id: string }
   | { type: 'delete'; id: string }
   | { type: 'edit'; id: string; text: string }
   | { type: 'reveal'; id: string }
   | { type: 'chat-flag'; chatId: string; patch: Partial<Chat> }
+  | { type: 'agent-session'; chatId: string; sessionId: string }
   | { type: 'delete-chat'; chatId: string }
   | { type: 'new-chat'; chat: Chat }
   | { type: 'settings'; patch: Partial<Store['settings']> }
@@ -71,6 +74,26 @@ export function reducer(state: Store, action: Action): Store {
           m.id === action.id ? { ...m, status: action.status, readAt: action.readAt ?? m.readAt } : m,
         ),
       };
+    case 'stream':
+      // Replaces rather than appends: the caller owns the accumulated text,
+      // so a dropped frame cannot leave the bubble with a hole in it.
+      return {
+        ...state,
+        messages: state.messages.map((m) =>
+          m.id === action.id
+            ? { ...m, text: action.text, streaming: action.done !== true }
+            : m,
+        ),
+      };
+    case 'approval-outcome':
+      return {
+        ...state,
+        messages: state.messages.map((m) =>
+          m.approval?.id === action.approvalId
+            ? { ...m, approval: { ...m.approval, outcome: action.outcome } }
+            : m,
+        ),
+      };
     case 'typing':
       return {
         ...state,
@@ -111,6 +134,13 @@ export function reducer(state: Store, action: Action): Store {
       return {
         ...state,
         messages: state.messages.map((m) => (m.id === action.id ? { ...m, revealed: true } : m)),
+      };
+    case 'agent-session':
+      return {
+        ...state,
+        chats: state.chats.map((c) =>
+          c.id === action.chatId ? { ...c, agentSessionId: action.sessionId } : c,
+        ),
       };
     case 'chat-flag':
       return {

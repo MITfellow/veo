@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } 
 import type { Chat, Message, ScreenEffect, Store, Tapback } from '../types';
 import { reducer } from './reducer';
 import { StoreContext, type Ctx, type SendOptions } from './context';
-import { buildSeedStore } from '../data/seed';
+import { AGENT_CHAT_ID, AGENT_CONTACT, buildSeedStore } from '../data/seed';
+import { agent, AgentUnavailableError } from './agent';
+import { isAgentChat } from './agent-chat';
 import { composeReply } from './bot';
 import { playReceive, playSend, playTapback, setSoundEnabled } from './sound';
 import { setCustomMemoji } from './memoji';
@@ -30,6 +32,55 @@ let uid = 0;
 const TAB_ID = `${Date.now().toString(36)}-${(Math.random() * 1e9).toString(36)}`;
 const newId = () => `u${Date.now().toString(36)}${(uid++).toString(36)}`;
 
+/** A message with every field at its boring default, ready to be overridden. */
+function blank(id: string, chatId: string): Message {
+  return {
+    id,
+    chatId,
+    authorId: 'me',
+    text: '',
+    at: Date.now(),
+    status: 'read',
+    attachments: [],
+    reactions: [],
+    bubbleEffect: 'none',
+    screenEffect: 'none',
+  };
+}
+
+/**
+ * Stores written before the agent existed have no agent contact and no agent
+ * chat. Add them on load rather than migrating the database: this is the one
+ * piece of state the app is allowed to assume into existence, because its
+ * absence is a missing feature rather than lost user data.
+ */
+function withAgent(store: Store): Store {
+  const hasChat = store.chats.some((c) => c.id === AGENT_CHAT_ID);
+  if (store.contacts[AGENT_CONTACT.id] !== undefined && hasChat) return store;
+  return {
+    ...store,
+    contacts: { ...store.contacts, [AGENT_CONTACT.id]: AGENT_CONTACT },
+    chats: hasChat
+      ? store.chats
+      : [
+          ...store.chats,
+          // Appended, not prepended: an existing install's first
+          // conversation stays its first conversation.
+          {
+            id: AGENT_CHAT_ID,
+            participantIds: [AGENT_CONTACT.id],
+            pinned: false,
+            muted: false,
+            unread: 0,
+            draft: '',
+            typing: false,
+            sms: false,
+            lastReadAt: 0,
+          },
+        ],
+  };
+}
+
 export function StoreProvider({ children }: { children: React.ReactNode }) {
   // IndexedDB is async, so the app starts on an empty seed and swaps in the
   // real store once it has loaded. `booted` gates persistence: writing before
@@ -43,8 +94,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     void loadState()
-      .then((loaded) => {
+      .then((raw) => {
         if (cancelled) return;
+        const loaded = withAgent(raw);
         stateRef.current = loaded;
         savedRef.current = loaded; // it came from storage; nothing to write back
         dispatch({ type: 'replace', store: loaded });
@@ -267,11 +319,135 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
+  /**
+   * An agent chat does not get an auto-reply: it gets a real run.
+   *
+   * The sequence is the whole integration in one function — create (or
+   * reuse) a runtime session, post the turn, then follow the run's event
+   * stream and paint it into the bubble as it arrives. Everything the agent
+   * does on the way (steps, tool calls, approval requests, degradation)
+   * arrives on that one stream, which is why the UI needs no polling and no
+   * second source of truth.
+   */
+  const deliverToAgent = useCallback(
+    async (chatId: string, outgoingId: string, text: string) => {
+      const bubble = newId();
+      const fail = (message: string) => {
+        dispatch({ type: 'typing', chatId, typing: false });
+        dispatch({ type: 'status', id: outgoingId, status: 'failed' });
+        dispatch({
+          type: 'push',
+          message: {
+            ...blank(bubble, chatId),
+            authorId: AGENT_CONTACT.id,
+            text: message,
+            system: true,
+          },
+        });
+      };
+
+      try {
+        let sessionId = stateRef.current.chats.find((c) => c.id === chatId)?.agentSessionId;
+        if (sessionId === undefined) {
+          sessionId = (await agent.createSession('Veo')).id;
+          dispatch({ type: 'agent-session', chatId, sessionId });
+        }
+
+        dispatch({ type: 'status', id: outgoingId, status: 'delivered' });
+        const { runId } = await agent.send(sessionId, text);
+        dispatch({ type: 'typing', chatId, typing: true, by: AGENT_CONTACT.id });
+
+        let painted = '';
+        let opened = false;
+        const open = () => {
+          if (opened) return;
+          opened = true;
+          dispatch({ type: 'typing', chatId, typing: false });
+          dispatch({
+            type: 'push',
+            message: { ...blank(bubble, chatId), authorId: AGENT_CONTACT.id, streaming: true },
+          });
+        };
+
+        await agent.follow(runId, {
+          onDelta: (delta) => {
+            open();
+            painted += delta;
+            dispatch({ type: 'stream', id: bubble, text: painted });
+          },
+          onTool: (tool) => {
+            dispatch({ type: 'typing', chatId, typing: true, by: AGENT_CONTACT.id });
+            if (!opened) return;
+            dispatch({ type: 'stream', id: bubble, text: `${painted}\n\n· using ${tool}…` });
+          },
+          onApproval: (approval) => {
+            dispatch({ type: 'typing', chatId, typing: false });
+            dispatch({
+              type: 'push',
+              message: {
+                ...blank(newId(), chatId),
+                authorId: AGENT_CONTACT.id,
+                text: '',
+                approval,
+              },
+            });
+          },
+          onApprovalDecided: (id, outcome) => {
+            if (outcome === 'granted' || outcome === 'denied' || outcome === 'expired') {
+              dispatch({ type: 'approval-outcome', approvalId: id, outcome });
+            }
+          },
+          onMessage: (final) => {
+            // The `message.agent` event is authoritative: deltas are a
+            // preview, this is what was actually committed to the log.
+            open();
+            painted = final;
+            dispatch({ type: 'stream', id: bubble, text: final, done: true });
+          },
+          onDone: () => {
+            dispatch({ type: 'typing', chatId, typing: false });
+            dispatch({ type: 'stream', id: bubble, text: painted, done: true });
+            if (painted !== '' && !stateRef.current.chats.find((c) => c.id === chatId)?.muted) {
+              playReceive();
+            }
+          },
+          onSuspended: () => {
+            dispatch({ type: 'typing', chatId, typing: false });
+          },
+          onError: (message) => {
+            if (opened) {
+              dispatch({
+                type: 'stream',
+                id: bubble,
+                text: `${painted}\n\n⚠︎ ${message}`,
+                done: true,
+              });
+              dispatch({ type: 'typing', chatId, typing: false });
+            } else fail(`⚠︎ ${message}`);
+          },
+        });
+        dispatch({ type: 'typing', chatId, typing: false });
+      } catch (error) {
+        fail(
+          error instanceof AgentUnavailableError
+            ? error.message
+            : `⚠︎ ${error instanceof Error ? error.message : 'the agent failed'}`,
+        );
+      }
+    },
+    [],
+  );
+
   /** Runs delivery receipts + the auto-reply conversation for an outgoing message. */
   const deliver = useCallback(
     (chatId: string, id: string, text: string) => {
       const chat = state.chats.find((c) => c.id === chatId);
       if (!chat) return;
+
+      if (isAgentChat(chat, state.contacts)) {
+        void deliverToAgent(chatId, id, text);
+        return;
+      }
 
       if (typeof navigator !== 'undefined' && navigator.onLine === false) {
         later(() => dispatch({ type: 'status', id, status: 'failed' }), 600);
@@ -343,7 +519,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         later(() => receive(second.id, extra.text), s2 + extra.typingFor);
       }
     },
-    [state.chats, state.contacts, state.settings.autoReply, later],
+    [state.chats, state.contacts, state.settings.autoReply, later, deliverToAgent],
   );
 
   const send = useCallback(

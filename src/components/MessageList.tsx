@@ -3,6 +3,7 @@ import type { Attachment, Chat, Message } from '../types';
 import { useStore } from '../lib/context';
 import { needsSeparator, sameGroup, separatorStamp, timeOfDay, separatorStamp as stampOf } from '../lib/time';
 import { Avatar } from './Avatar';
+import { ApprovalCard } from './ApprovalCard';
 import { Bubble } from './Bubble';
 import { Lightbox, type LightboxItem } from './Lightbox';
 
@@ -271,7 +272,9 @@ export function MessageList({
                 <b>{stamp.lead}</b> {stamp.time}
               </div>
             )}
-            {m.system ? (
+            {m.approval !== undefined ? (
+              <ApprovalCard msg={m} />
+            ) : m.system ? (
               <div className="system-note">{m.text}</div>
             ) : (
               <Bubble

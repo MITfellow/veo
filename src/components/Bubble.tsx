@@ -477,7 +477,7 @@ function BubbleBase({
               <div
                 className={`bubble ${out ? 'out' : 'in'} ${sms ? 'sms' : ''} ${isTail ? 'tail' : ''} ${
                   jumbo ? 'jumbo' : ''
-                } ${effectClass} ${ink ? 'ink' : ''}`}
+                } ${effectClass} ${ink ? 'ink' : ''} ${msg.streaming === true ? 'streaming' : ''}`}
                 onContextMenu={openMenu}
                 onClick={() => ink && dispatch({ type: 'reveal', id: msg.id })}
                 title={ink ? 'Click to reveal' : undefined}
@@ -490,6 +490,11 @@ function BubbleBase({
                   </div>
                 )}
                 {ink ? <span className="ink-content">{content}</span> : content}
+                {msg.trust === 'FOREIGN' && (
+                  <span className="trust-tag" title="This came from outside; the agent treats it as untrusted">
+                    foreign
+                  </span>
+                )}
                 <InkOverlay active={ink} />
                 {grouped.size > 0 && (
                   <div className="tapbacks">

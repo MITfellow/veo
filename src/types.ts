@@ -107,6 +107,22 @@ export interface Message {
   unsent?: boolean;
   /** system notices: "Name named the conversation ..." */
   system?: boolean;
+  /**
+   * The agent is asking permission before doing something irreversible
+   * (§19). Rendered as a card with the preview it generated, not as text:
+   * an approval the user can mistake for chatter is not consent.
+   */
+  approval?: {
+    id: string;
+    tool: string;
+    preview: string;
+    risk: string;
+    outcome?: 'granted' | 'denied' | 'expired';
+  };
+  /** Provenance of the content, carried straight from the event log. */
+  trust?: string;
+  /** True while deltas are still arriving. */
+  streaming?: boolean;
 }
 
 export interface Contact {
@@ -118,6 +134,11 @@ export interface Contact {
   avatar?: string;
   /** persona drives the auto-reply engine */
   persona: 'friend' | 'family' | 'work' | 'partner' | 'business' | 'group';
+  /**
+   * This "contact" is the agent that lives in this app, not a person. A chat
+   * with it is routed to the ARISH runtime instead of the reply engine.
+   */
+  agent?: boolean;
   sms?: boolean;
   bio?: string;
 }
@@ -135,6 +156,8 @@ export interface Chat {
   sms: boolean;
   hidePreview?: boolean;
   lastReadAt: number;
+  /** For agent chats: the runtime session this conversation maps to. */
+  agentSessionId?: string;
 }
 
 export interface Store {

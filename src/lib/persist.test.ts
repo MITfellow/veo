@@ -12,10 +12,13 @@ beforeEach(async () => {
 describe('persistence', () => {
   it('starts a fresh install empty, with the contact directory intact', async () => {
     const s = await loadState();
-    expect(s.chats).toEqual([]);
+    // No invented history of any kind. The one chat present is the agent's
+    // own, and it is empty too: the agent is the product, not seed content.
     expect(s.messages).toEqual([]);
+    expect(s.chats.map((c) => c.id)).toEqual(['c-agent']);
+    expect(s.contacts['agent'].agent).toBe(true);
     expect(s.activeChatId).toBeNull();
-    expect(Object.keys(s.contacts).length).toBeGreaterThan(0);
+    expect(Object.keys(s.contacts).length).toBeGreaterThan(1);
   });
 
   it('round-trips a store', async () => {
@@ -42,13 +45,16 @@ describe('persistence', () => {
   it('survives corrupt storage', async () => {
     localStorage.setItem(STORAGE_KEY, '{not json');
     const s = await loadState();
-    expect(s.chats).toEqual([]);
+    expect(s.messages).toEqual([]);
+    expect(s.chats.map((c) => c.id)).toEqual(['c-agent']);
   });
 
   it('clears everything', async () => {
     await saveState(buildDemoStore());
     await clearState();
-    expect((await loadState()).chats).toEqual([]);
+    const cleared = await loadState();
+    expect(cleared.messages).toEqual([]);
+    expect(cleared.chats.map((c) => c.id)).toEqual(['c-agent']);
   });
 });
 
@@ -202,7 +208,7 @@ describe('the rename from Messages to Veo', () => {
 
   it('does not invent an empty legacy database on a fresh install', async () => {
     const loaded = await loadState();
-    expect(loaded.chats).toEqual([]);
+    expect(loaded.messages).toEqual([]);
 
     // fake-indexeddb exposes databases(); nothing should have been created
     const names = (await indexedDB.databases()).map((d) => d.name);

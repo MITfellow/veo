@@ -9,3 +9,6 @@ playwright-report
 test-results
 /blob-report
 .playwright
+
+# the agent's local database and files
+.arish/

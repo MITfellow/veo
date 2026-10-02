@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import type { ProxyOptions } from 'vite';
 import react from '@vitejs/plugin-react';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
@@ -29,6 +30,28 @@ const pkg = JSON.parse(readFileSync(resolve(process.cwd(), 'package.json'), 'utf
   version: string;
 };
 
+/**
+ * The agent runs as its own process (`npm run agent`). The browser never
+ * talks to it directly — it asks this server, which forwards.
+ *
+ * That indirection buys two things. The page can be served from any host (a
+ * tunnel, a preview URL) without the agent having to allow that origin; and
+ * the bearer token stays on this side of the wire instead of living in the
+ * bundle where every extension can read it.
+ */
+const agentProxy: Record<string, ProxyOptions> = {
+  '/agent': {
+    target: `http://127.0.0.1:${process.env.ARISH_PORT ?? 7777}`,
+    changeOrigin: true,
+    rewrite: (path: string) => path.replace(/^\/agent/, ''),
+    configure: (proxy) => {
+      proxy.on('proxyReq', (proxyReq) => {
+        proxyReq.setHeader('authorization', `Bearer ${process.env.ARISH_TOKEN ?? 'dev-token'}`);
+      });
+    },
+  },
+};
+
 export default defineConfig({
   plugins: [react(), serviceWorkerManifest()],
   // surfaced in Settings → About, so a bug report can name the build it came from
@@ -43,8 +66,9 @@ export default defineConfig({
     allowedHosts: true,
     cors: true,
     hmr: { clientPort: 443, protocol: 'wss' },
+    proxy: agentProxy,
   },
-  preview: { host: '0.0.0.0', port: 4173, allowedHosts: true },
+  preview: { host: '0.0.0.0', port: 4173, allowedHosts: true, proxy: agentProxy },
   build: {
     target: 'es2020',
     sourcemap: true,

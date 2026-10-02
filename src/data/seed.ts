@@ -77,6 +77,25 @@ export const CONTACTS: Contact[] = [
   },
 ];
 
+/**
+ * The agent is not a person and not seeded chatter: it is the one thing in
+ * this app that is actually running. It gets a contact card so it can have a
+ * conversation like anybody else, and `agent: true` is what routes that
+ * conversation to the runtime in `agent/` instead of the reply engine.
+ */
+export const AGENT_CONTACT: Contact = {
+  id: 'agent',
+  name: 'Agent',
+  handle: 'runs on this device',
+  initials: 'A',
+  color: ['#8E8CFF', '#5B4BFF'],
+  persona: 'work',
+  agent: true,
+  bio: 'Your agent. Remembers, asks before anything irreversible, keeps a log you can read.',
+};
+
+export const AGENT_CHAT_ID = 'c-agent';
+
 export const DEFAULT_SETTINGS: Store['settings'] = {
   theme: 'system',
   sounds: true,
@@ -97,9 +116,26 @@ export const ME = { name: 'You', handle: '+1 (415) 555‑0101' };
 export function buildSeedStore(): Store {
   const contacts: Record<string, Contact> = {};
   for (const c of CONTACTS) contacts[c.id] = c;
+  contacts[AGENT_CONTACT.id] = AGENT_CONTACT;
   return {
     contacts,
-    chats: [],
+    // Still no conversation history of any kind. The one chat here is empty
+    // and is the agent's own: it is the product, not seeded content.
+    chats: [
+      {
+        id: AGENT_CHAT_ID,
+        participantIds: [AGENT_CONTACT.id],
+        // Not pinned: it earns its place in the list by recency like every
+        // other conversation. Pinning it would be the app shouting.
+        pinned: false,
+        muted: false,
+        unread: 0,
+        draft: '',
+        typing: false,
+        sms: false,
+        lastReadAt: 0,
+      },
+    ],
     messages: [],
     activeChatId: null,
     me: { ...ME },

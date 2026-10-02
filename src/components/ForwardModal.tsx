@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useStore } from '../lib/context';
+import { isAgentChat } from '../lib/agent-chat';
 import type { Message } from '../types';
 import { ChatAvatar } from './Avatar';
 import { IconSearch } from './Icons';
@@ -21,13 +22,17 @@ export function ForwardModal({ msg, onClose }: { msg: Message; onClose: () => vo
     const needle = q.trim().toLowerCase();
     return state.chats
       .filter((c) => c.id !== msg.chatId)
+      // Not the agent: forwarding into it would hand the runtime a message
+      // nobody asked it to act on, which is exactly the shape of a prompt
+      // injection. Say things to the agent on purpose.
+      .filter((c) => !isAgentChat(c, state.contacts))
       .filter((c) => !needle || chatTitle(c).toLowerCase().includes(needle))
       // most recently active first, the order the sidebar uses
       .sort((a, b) => {
         const at = (id: string) => messagesFor(id).at(-1)?.at ?? 0;
         return at(b.id) - at(a.id);
       });
-  }, [state.chats, msg.chatId, q, chatTitle, messagesFor]);
+  }, [state.chats, state.contacts, msg.chatId, q, chatTitle, messagesFor]);
 
   const forward = (chatId: string) => {
     send(chatId, { text: msg.text, attachments: msg.attachments, forwarded: true });
@@ -50,7 +55,7 @@ export function ForwardModal({ msg, onClose }: { msg: Message; onClose: () => vo
             <span className="fwd-quote">{preview}</span>
           </div>
 
-          {state.chats.length > 1 && (
+          {targets.length > 1 && (
             <div className="search">
               <IconSearch />
               <input
