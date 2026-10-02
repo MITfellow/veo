@@ -22,8 +22,11 @@ import { z } from 'zod';
 import type { EventLog } from '../substrate/events/log.js';
 import type { Clock, FileStore, Hashing, Ids, Logger, Net, Storage } from '../substrate/ports.js';
 import type { Redactor } from '../substrate/events/redact.js';
+import { canonicalJson } from '../substrate/hash.js';
 import type { TrustLevel } from '../substrate/events/types.js';
-import { checkCapabilities } from '../security/trust.js';
+import type { Capability } from '../security/trust.js';
+import { decide, type Grants } from './policy.js';
+import type { ApprovalStore } from './approvals.js';
 import { trustRank } from '../substrate/events/types.js';
 import type { Vault } from '../security/vault.js';
 import type { ModelRequestFirewall } from '../security/firewall.js';
@@ -43,10 +46,29 @@ export interface Observation {
   artifacts: string[];
   /** Trust of the *result*, which feeds the lattice on the next step. */
   trust: TrustLevel;
+  /**
+   * Set when the call needs a human before it can proceed.
+   *
+   * The invoker does not block or poll — it records the request and hands
+   * the id back. Deciding what to do with a run that cannot continue is the
+   * orchestrator's job (§19: suspend durably, release all resources), and
+   * the capability layer has no business knowing how runs are parked.
+   */
+  awaitingApproval?: { approvalId: string; preview: string };
 }
 
 export interface InvokeRequest {
   callId: string;
+  /** Needed so a 'session'-scoped approval can be matched. */
+  sessionId?: string | null;
+  /**
+   * The approval that authorises this specific call.
+   *
+   * Set only by the resume path. It is checked against the stored record —
+   * same tool, same input, same run — so it cannot be used to launder an
+   * approval for one call into permission for another.
+   */
+  approvalId?: string;
   tool: string;
   version?: string;
   input: unknown;
@@ -67,6 +89,19 @@ export interface InvokerDeps {
   ids: Ids;
   hashing: Hashing;
   logger: Logger;
+  /**
+   * The principal's grants and what they delegated to the agent (§19).
+   *
+   * Required for the same reason `redactor` is: a default would be either
+   * too wide (and invisible) or too narrow (and mysterious). `DEFAULT_GRANTS`
+   * exists for tests and single-user setups, so choosing it is a visible act.
+   */
+  grants: Grants;
+  /**
+   * Approvals (M4). Without it, a `dangerous` tool is refused outright —
+   * which is the correct failure, but not a useful product.
+   */
+  approvals?: ApprovalStore;
   /**
    * Redacts secrets from observation text on the way to the model (§13).
    *
@@ -138,32 +173,136 @@ export class Invoker {
     /* ── 3. trust and capability gate ──────────────────────────────────── */
     if (trustRank(request.effectiveTrust) < trustRank(tool.minTrust)) {
       const reason =
-        `'${tool.name}' requires ${tool.minTrust} trust but this step is running at ` +
-        `${request.effectiveTrust}, because untrusted content is somewhere in its causal chain.`;
-      this.appendPolicyDenied(request, tool, reason);
-      return this.refuse(request, `${reason} Ask the user to do this directly if it matters.`, 'denied');
-    }
-
-    const decision = checkCapabilities(request.effectiveTrust, tool.capabilities);
-    if (!decision.allowed) {
-      this.appendPolicyDenied(request, tool, decision.explanation);
-      return this.refuse(request, decision.explanation, 'denied');
-    }
-
-    /* ── 4. dangerous tools need an approval, which is M4 ──────────────── */
-    if (tool.risk === 'dangerous') {
-      const preview = await this.safePreview(tool, parsedInput.data, request);
-      this.appendPolicyDenied(
-        request,
-        tool,
-        `'${tool.name}' is a dangerous tool and requires explicit human approval`,
+        `'${tool.name}' was refused: it needs ${tool.capabilities.join(', ') || 'elevated trust'} ` +
+        `and requires ${tool.minTrust} trust, but this step is running at ${request.effectiveTrust} ` +
+        'because untrusted content is somewhere in its causal chain. ' +
+        'Content whose origin cannot be vouched for does not reach credentials, money, or ' +
+        'outbound messages, whatever that content asks for.';
+      const escalated = await this.escalate(
+        tool, parsedInput.data, request, tool.capabilities, reason,
       );
+      if (escalated !== null) return escalated;
+
+      this.appendPolicyDenied(request, tool, reason);
+      const alternatives = this.alternativesTo(tool);
       return this.refuse(
         request,
-        `'${tool.name}' needs the user's approval before it can run, and approvals are not ` +
-          `available yet. It was NOT executed. What it would have done: ${preview}`,
+        alternatives.length > 0
+          ? `${reason} You can still use: ${alternatives.join(', ')}.`
+          : `${reason} Do not retry this call. Tell the user what you were trying to do and why it stopped.`,
         'denied',
       );
+    }
+
+    // The capability set is the intersection of four things (§19), not the
+    // trust ceiling alone: a USER-trust step still cannot do what the
+    // principal never granted or never delegated.
+    const verdict = decide({
+      tool: tool.name,
+      required: tool.capabilities as readonly Capability[],
+      trust: request.effectiveTrust,
+      grants: this.deps.grants,
+      alternatives: this.alternativesTo(tool),
+    });
+    if (!verdict.allowed) {
+      // §12.3: a human may lift this, when there is a human to ask and the
+      // step is not FOREIGN-influenced.
+      if (verdict.escalatable) {
+        const escalated = await this.escalate(
+          tool, parsedInput.data, request, verdict.missing, verdict.explanation,
+        );
+        if (escalated !== null) return escalated;
+      }
+      this.appendPolicyDenied(request, tool, verdict.explanation, verdict.missing);
+      return this.refuse(request, verdict.explanation, 'denied');
+    }
+
+    /* ── 4. dangerous tools need a human (§19) ─────────────────────────── */
+    if (tool.risk === 'dangerous') {
+      const approvals = this.deps.approvals;
+      const preview = await this.safePreview(tool, parsedInput.data, request);
+
+      if (approvals === undefined) {
+        // No approval mechanism wired up: refuse, and say so precisely. The
+        // tool did not run, and the user can see what it would have done.
+        this.appendPolicyDenied(request, tool, 'dangerous tool, no approval mechanism', []);
+        return this.refuse(
+          request,
+          `'${tool.name}' needs a human's approval and no approval mechanism is configured. ` +
+            `It was NOT executed. What it would have done: ${preview}`,
+          'denied',
+        );
+      }
+
+      // An approval granted for exactly this call, being resumed.
+      if (request.approvalId !== undefined) {
+        const record = approvals.get(request.approvalId);
+        const matches =
+          record !== undefined &&
+          record.state === 'granted' &&
+          record.tool === tool.name &&
+          record.runId === request.runId &&
+          canonicalJson(record.input) === canonicalJson(parsedInput.data);
+
+        if (!matches) {
+          const reason =
+            `'${tool.name}' was not executed: approval '${request.approvalId}' does not ` +
+            'authorise this exact call. An approval covers the call it was shown for, ' +
+            'and nothing else.';
+          this.appendPolicyDenied(request, tool, reason, []);
+          return this.refuse(request, reason, 'denied');
+        }
+        // Authorised — fall through to execute.
+      } else {
+
+      const standing = approvals.standingDecision(
+        tool.name,
+        parsedInput.data,
+        request.sessionId ?? null,
+      );
+
+      if (standing !== null && !standing.granted) {
+        // A standing "never" is honoured without asking again. Re-asking a
+        // question already answered no is how users learn to stop reading.
+        const reason =
+          `'${tool.name}' was permanently declined by the user` +
+          (standing.via.reason !== null ? `: ${standing.via.reason}` : '.') +
+          ' It was NOT executed, and asking again will not change it.';
+        this.appendPolicyDenied(request, tool, reason, []);
+        return this.refuse(request, reason, 'denied');
+      }
+
+      if (standing === null) {
+        const record = approvals.request({
+          runId: request.runId,
+          stepId: request.stepId,
+          sessionId: request.sessionId ?? null,
+          principal: request.principal,
+          tool: tool.name,
+          toolVersion: tool.version,
+          input: parsedInput.data,
+          preview,
+          risk: tool.risk,
+          requestedTrust: request.effectiveTrust,
+        });
+
+        // Not an error and not a refusal: a pause. The run is suspended by
+        // the orchestrator, and the tool has not run.
+        return {
+          tool: tool.name,
+          callId: request.callId,
+          ok: false,
+          text:
+            `'${tool.name}' is waiting for the user's approval. It has NOT run. ` +
+            `They are being shown: ${preview}`,
+          truncated: false,
+          artifacts: [],
+          trust: 'SYSTEM',
+          awaitingApproval: { approvalId: record.id, preview },
+        };
+      }
+      // standing.granted — fall through and execute.
+      }
     }
 
     /* ── 5. secrets, scoped and zeroized ───────────────────────────────── */
@@ -504,6 +643,80 @@ export class Invoker {
     return [...declared, ref];
   }
 
+  /**
+   * Ask a human to lift a trust-based refusal (§12.3).
+   *
+   *   > A FOREIGN-influenced step that wants a higher capability must emit
+   *   > `policy.escalated` and obtain an explicit approval that shows the
+   *   > user *what content is asking for it*.
+   *
+   * With one deliberate narrowing, written up in decision 022: a step whose
+   * floor is **FOREIGN** is refused outright and never escalated. Offering
+   * to approve what a web page asked for is the approval-fatigue attack with
+   * extra steps — the user is shown a plausible request, approves the
+   * fortieth one, and the gate was decorative. TOOL and above may escalate,
+   * because something allowlisted is asking.
+   */
+  private async escalate(
+    tool: Tool<any, any>,
+    input: unknown,
+    request: InvokeRequest,
+    missing: readonly string[],
+    reason: string,
+  ): Promise<Observation | null> {
+    const approvals = this.deps.approvals;
+    if (approvals === undefined) return null;
+    if (request.effectiveTrust === 'FOREIGN') return null;
+
+    const standing = approvals.standingDecision(tool.name, input, request.sessionId ?? null);
+    if (standing !== null && !standing.granted) return null;
+    if (standing !== null && standing.granted) return null; // caller re-checks and proceeds
+
+    const preview = await this.safePreview(tool, input, request);
+
+    this.deps.events.append({
+      type: 'policy.escalated',
+      payload: {
+        tool: tool.name,
+        from: request.effectiveTrust,
+        requested: [...missing],
+        askingContent: reason,
+      },
+      principal: request.principal,
+      trust: 'SYSTEM',
+      runId: request.runId,
+      stepId: request.stepId,
+    });
+
+    const record = approvals.request({
+      runId: request.runId,
+      stepId: request.stepId,
+      sessionId: request.sessionId ?? null,
+      principal: request.principal,
+      tool: tool.name,
+      toolVersion: tool.version,
+      input,
+      // The user is shown what the call would do AND why it needed them —
+      // consent without the reason is just a button.
+      preview: `${preview}\n\nThis needs you because: ${reason}`,
+      risk: tool.risk,
+      requestedTrust: request.effectiveTrust,
+    });
+
+    return {
+      tool: tool.name,
+      callId: request.callId,
+      ok: false,
+      text:
+        `'${tool.name}' needs ${missing.join(', ') || 'higher trust'} and this step does not ` +
+        `have it, so the user has been asked. It has NOT run.`,
+      truncated: false,
+      artifacts: [],
+      trust: 'SYSTEM',
+      awaitingApproval: { approvalId: record.id, preview },
+    };
+  }
+
   private async safePreview(
     tool: Tool<any, any>,
     input: unknown,
@@ -562,8 +775,21 @@ export class Invoker {
       text: this.scrub(text),
       truncated: false,
       artifacts: [],
-      // A refusal carries no data, so it cannot launder trust upward.
-      trust: request.effectiveTrust,
+      /**
+       * A refusal is **kernel-authored text**, so it is SYSTEM.
+       *
+       * It was previously tagged with the step's effective trust, which
+       * seemed conservative and was actively harmful: the context assembler
+       * then fenced our own explanation as untrusted data and told the model
+       * to ignore any instruction inside it. The model was being shown the
+       * reason it was refused and simultaneously told not to act on it,
+       * which is how a denial turns into a retry loop.
+       *
+       * This cannot launder trust upward: the step's floor is recomputed
+       * from the event log every step (§12.1), where the FOREIGN event that
+       * caused the refusal still sits. Nothing here raises it.
+       */
+      trust: 'SYSTEM',
     };
   }
 
@@ -584,12 +810,39 @@ export class Invoker {
     });
   }
 
-  private appendPolicyDenied(request: InvokeRequest, tool: Tool<any, any>, reason: string): void {
+  /**
+   * Tools the model could use instead, so a denial ends the loop.
+   *
+   * Only tools whose capabilities the current grants actually cover — a
+   * suggestion that will also be refused is worse than no suggestion.
+   */
+  private alternativesTo(denied: Tool<any, any>): string[] {
+    return this.deps.registry
+      .list()
+      .filter((tool) => tool.name !== denied.name && tool.risk !== 'dangerous')
+      .filter((tool) =>
+        decide({
+          tool: tool.name,
+          required: tool.capabilities as readonly Capability[],
+          trust: 'FOREIGN',
+          grants: this.deps.grants,
+        }).allowed,
+      )
+      .map((tool) => tool.name)
+      .slice(0, 3);
+  }
+
+  private appendPolicyDenied(
+    request: InvokeRequest,
+    tool: Tool<any, any>,
+    reason: string,
+    missing: readonly string[] = tool.capabilities,
+  ): void {
     this.deps.events.append({
       type: 'policy.denied',
       payload: {
         tool: tool.name,
-        missing: tool.capabilities,
+        missing: [...missing],
         explanation: reason,
         effectiveTrust: request.effectiveTrust,
       },

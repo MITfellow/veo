@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { DEFAULT_GRANTS } from '../../src/capability/policy.js';
 import { Invoker } from '../../src/capability/invoke.js';
 import { ToolRegistry } from '../../src/capability/registry.js';
 import { registerBuiltins } from '../../src/tools/index.js';
@@ -27,6 +28,7 @@ const STEP = 'step-1';
 function makeInvoker(extra: Partial<ConstructorParameters<typeof Invoker>[0]> = {}): Invoker {
   return new Invoker({
     registry,
+    grants: DEFAULT_GRANTS,
     events: substrate.events,
     storage: substrate.storage,
     clock: substrate.clock,
@@ -160,7 +162,7 @@ describe('the gates', () => {
     expect(observation.ok).toBe(true);
   });
 
-  it('refuses a dangerous tool outright until approvals exist, with a preview', async () => {
+  it('refuses a dangerous tool when no approval mechanism is wired, with a preview', async () => {
     registry.register({
       ...echoTool,
       name: 'test.dangerous',
@@ -169,8 +171,12 @@ describe('the gates', () => {
     });
     const observation = await call({ tool: 'test.dangerous', input: { text: 'boom' } });
     expect(observation.ok).toBe(false);
-    expect(observation.text).toContain('needs the user');
+    // This invoker has no ApprovalStore. The refusal must say so rather
+    // than implying the user declined — M4 wires the store, and the
+    // approvals suite covers the configured path.
+    expect(observation.text).toContain('no approval mechanism is configured');
     expect(observation.text).toContain('NOT executed');
+    expect(observation.awaitingApproval).toBeUndefined();
     // The preview is shown even though the tool did not run — that is the
     // whole reason dryRun is mandatory for dangerous tools.
     expect(observation.text).toContain('would echo "boom" irreversibly');

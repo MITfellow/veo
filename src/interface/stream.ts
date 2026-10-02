@@ -14,6 +14,7 @@
  */
 import type { ServerResponse } from 'node:http';
 import type { EventLog } from '../substrate/events/log.js';
+import type { Redactor } from '../substrate/events/redact.js';
 import type { Clock } from '../substrate/ports.js';
 
 export interface SseEvent {
@@ -40,6 +41,19 @@ export function heartbeat(): string {
 export interface SseConnectionOptions {
   res: ServerResponse;
   clock: Clock;
+  /**
+   * Redacts every frame on the way out (§13, invariant 7).
+   *
+   * Carried as a gap from M2 and closed in M4. The event log redacts on
+   * append and the invoker redacts observations, but the SSE stream is a
+   * third exit and it had neither — live token deltas never touch the log
+   * before they reach the browser. A model that is mid-sentence quoting a
+   * credential would have streamed it straight out.
+   *
+   * Optional only so a test can construct a connection without one; the
+   * API always supplies it.
+   */
+  redactor?: Redactor;
   /** Called when the client goes away, so the producer can stop working. */
   onClose?: () => void;
   heartbeatMs?: number;
@@ -88,7 +102,11 @@ export class SseConnection {
   /** Queue a frame, honouring backpressure. */
   send(event: SseEvent): Promise<void> {
     if (this.closed) return Promise.resolve();
-    this.pending = this.pending.then(() => this.writeWithBackpressure(formatSse(event)));
+    // Redacted at the last possible moment — after formatting, so the
+    // framing itself cannot smuggle anything past the filter.
+    const frame = formatSse(event);
+    const safe = this.options.redactor === undefined ? frame : this.options.redactor.redact(frame);
+    this.pending = this.pending.then(() => this.writeWithBackpressure(safe));
     return this.pending;
   }
 
@@ -163,6 +181,22 @@ export function toFrame(type: string, payload: unknown, seq: number): SseEvent |
       return { id: seq, event: 'cancelled', data: payload };
     case 'run.suspended':
       return { id: seq, event: 'suspended', data: payload };
+
+    // §29: approvals are part of the stream. A client that has to poll to
+    // notice the agent is waiting on a human will notice late, and the run
+    // is parked until it does.
+    case 'approval.requested':
+      return { id: seq, event: 'approval', data: payload };
+    case 'approval.granted':
+    case 'approval.denied':
+    case 'approval.expired':
+      return {
+        id: seq,
+        event: 'approval-decided',
+        data: { ...(payload as Record<string, unknown>), outcome: type },
+      };
+    case 'run.resumed':
+      return { id: seq, event: 'resumed', data: payload };
     default:
       return null;
   }

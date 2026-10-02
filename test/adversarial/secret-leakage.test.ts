@@ -212,3 +212,44 @@ describe('secret leakage fuzz — the M1 bar', () => {
     substrate.close();
   });
 });
+
+/* ────────────────────────────────────────────────────────────────────────
+ * M4: the SSE stream, which until now had no redactor at all.
+ *
+ * The log redacts on append and the invoker redacts observations, but a
+ * live token delta goes model → stream → browser without ever touching
+ * either. It was the one surface §31's "fuzz every surface" had not been
+ * pointed at.
+ * ──────────────────────────────────────────────────────────────────────── */
+describe('the SSE stream is redacted too (invariant 7)', () => {
+  it('scrubs a secret from a live delta frame', async () => {
+    const { Redactor } = await import('../../src/substrate/events/redact.js');
+    const { SseConnection } = await import('../../src/interface/stream.js');
+    const { FakeClock } = await import('../../src/substrate/clock.js');
+
+    const SECRET = 'sk-live-STREAMED-SECRET-001';
+    const redactor = new Redactor();
+    redactor.register(SECRET, 'api-key');
+
+    const written: string[] = [];
+    const res = {
+      writeHead() {},
+      write(chunk: string) {
+        written.push(chunk);
+        return true;
+      },
+      end() {},
+      on() {},
+      once() {},
+      writableEnded: false,
+    } as unknown as import('node:http').ServerResponse;
+
+    const connection = new SseConnection({ res, clock: new FakeClock(), redactor });
+    await connection.send({ id: 1, event: 'delta', data: { text: `the key is ${SECRET}` } });
+    await connection.close();
+
+    const everything = written.join('');
+    expect(everything).not.toContain(SECRET);
+    expect(everything).toContain('delta'); // the frame still arrived
+  });
+});

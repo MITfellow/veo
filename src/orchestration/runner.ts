@@ -48,6 +48,8 @@ import {
   type Turn,
 } from '../cognition/context/assemble.js';
 import type { Invoker, Observation } from '../capability/invoke.js';
+import type { ApprovalStore, SuspensionStore } from '../capability/approvals.js';
+import { DEFAULT_DAILY_BUDGET, ZERO_SPEND, type Budget, type DailyLedger } from '../capability/budgets.js';
 
 export type StopReason = (typeof STOP_REASONS)[number];
 
@@ -63,6 +65,9 @@ export interface RunLimits {
   maxTokens: number;
   maxWallMs: number;
   maxCostMicros: number;
+  /** M4 (§19): the sixth dimension. Egress bytes are bounded per run by the
+   *  scoped Net, which is where the bytes actually are. */
+  maxToolCalls: number;
   /** Context budget handed to the assembler. */
   maxContextTokens: number;
 }
@@ -72,6 +77,7 @@ export const DEFAULT_LIMITS: RunLimits = {
   maxTokens: 100_000,
   maxWallMs: 300_000,
   maxCostMicros: 1_000_000, // $1.00
+  maxToolCalls: 40,
   maxContextTokens: 6_000,
 };
 
@@ -108,6 +114,8 @@ interface CapState {
   steps: number;
   tokens: number;
   costMicros: number;
+  /** M4: a run can be cheap per step and still make four hundred calls. */
+  toolCalls: number;
   startedAt: number;
 }
 
@@ -126,8 +134,37 @@ export interface RunnerDeps {
    * `tool.requested` and stops honestly rather than pretending.
    */
   invoker?: Invoker;
+  /** The per-day spend ledger (§19). Omitted means per-run limits only. */
+  dailyLedger?: DailyLedger;
+  dailyBudget?: Budget;
+  /** Approvals (M4). Without it, a dangerous tool is simply refused. */
+  approvals?: ApprovalStore;
+  /** Where a run parks while it waits for a human (§19). */
+  suspensions?: SuspensionStore;
+  /**
+   * Turn the untrusted-content fence OFF. Adversarial testing only (§33).
+   * Production leaves it on; the point of the switch is to prove nothing
+   * depends on it.
+   */
+  fence?: boolean;
   /** Degradation level to report in the Situation block (§27). */
   degradation?: () => string;
+}
+
+/**
+ * What a resumed run needs to pick up where it stopped.
+ *
+ * Reconstructed from rows, never from a serialized continuation: a
+ * continuation would be a second source of truth about where the run was
+ * (invariant 1) and would rot the first time the surrounding code changed.
+ */
+export interface ResumeState {
+  stepIndex: number;
+  spend: { steps: number; tokens: number; costMicros: number };
+  /** The call the human authorised, to be executed first. */
+  approval: { id: string; tool: string; input: unknown; stepId: string } | null;
+  /** Set instead when the human said no — the model is told, in words. */
+  denialText: string | null;
 }
 
 export class Runner {
@@ -147,7 +184,63 @@ export class Runner {
     return this.controllers.has(runId);
   }
 
-  async run(request: RunRequest): Promise<RunOutcome> {
+  /**
+   * Continue a run that was parked waiting for a human (§19).
+   *
+   * Resumes **at the step that asked**, not from the beginning. Replaying
+   * from the top would re-execute every tool call already made, which for
+   * anything non-idempotent is the double-effect M3 exists to prevent.
+   *
+   * Everything needed comes out of the database: the suspension row says
+   * where to continue, the approval row says what was authorised, and the
+   * event log supplies the history. Nothing was held in memory, which is
+   * why this works across a process restart.
+   */
+  async resume(approvalId: string): Promise<RunOutcome> {
+    const approvals = this.deps.approvals;
+    const suspensions = this.deps.suspensions;
+    if (approvals === undefined || suspensions === undefined) {
+      throw new Error('this runner has no approval store; nothing can be resumed');
+    }
+
+    const approval = approvals.get(approvalId);
+    if (approval === undefined) throw new Error(`no approval '${approvalId}'`);
+    if (approval.state === 'pending') {
+      throw new Error(`approval '${approvalId}' has not been answered yet`);
+    }
+
+    const suspension = suspensions.waitingOn(approvalId);
+    if (suspension === undefined) {
+      throw new Error(`no run is waiting on approval '${approvalId}'`);
+    }
+
+    suspensions.markResumed(suspension.runId);
+
+    return this.run(
+      {
+        sessionId: suspension.sessionId,
+        principal: suspension.principal,
+        trigger: 'resume',
+        runId: suspension.runId,
+      },
+      {
+        stepIndex: suspension.stepIndex,
+        spend: suspension.spend,
+        approval:
+          approval.state === 'granted'
+            ? { id: approvalId, tool: approval.tool, input: approval.input, stepId: approval.stepId }
+            : null,
+        denialText:
+          approval.state === 'granted'
+            ? null
+            : `The user declined to approve '${approval.tool}'. It was NOT run` +
+              (approval.reason !== null ? `, because: ${approval.reason}` : '.') +
+              ' Do not try it again; tell them what you were attempting and ask how to proceed.',
+      },
+    );
+  }
+
+  async run(request: RunRequest, resume?: ResumeState): Promise<RunOutcome> {
     const { events, clock, ids, logger, model } = this.deps;
     const limits: RunLimits = { ...DEFAULT_LIMITS, ...request.limits };
 
@@ -156,7 +249,7 @@ export class Runner {
     this.controllers.set(runId, controller);
 
     const startedAt = clock.now();
-    const runStarted = events.append({
+    const runStarted = resume !== undefined ? null : events.append({
       type: 'run.started',
       payload: {
         trigger: request.trigger,
@@ -177,7 +270,16 @@ export class Runner {
       correlationId: runId,
     });
 
-    const caps: CapState = { steps: 0, tokens: 0, costMicros: 0, startedAt };
+    // A resumed run continues under the budget it had already spent. A run
+    // that suspends is not a run that reset — otherwise "ask for approval"
+    // becomes a way to get a fresh allowance.
+    const caps: CapState = {
+      toolCalls: 0,
+      steps: resume?.stepIndex ?? 0,
+      tokens: resume?.spend.tokens ?? 0,
+      costMicros: resume?.spend.costMicros ?? 0,
+      startedAt,
+    };
     let finalText = '';
     let inputTokens = 0;
     let outputTokens = 0;
@@ -186,6 +288,38 @@ export class Runner {
     let partial: StreamTotals | null = null;
     /** Tool results from the previous step, fed back as the next input. */
     const observations: Observation[] = [];
+
+    // The approved call runs FIRST, at the step that asked for it, so its
+    // idempotency key is unchanged and an effect already committed is
+    // recognised rather than repeated.
+    if (resume?.approval != null && this.deps.invoker !== undefined) {
+      const approved = resume.approval;
+      observations.push(
+        await this.deps.invoker.invoke({
+          callId: `resume-${approved.id}`,
+          tool: approved.tool,
+          input: approved.input,
+          runId,
+          stepId: approved.stepId,
+          sessionId: request.sessionId,
+          principal: request.principal,
+          effectiveTrust: 'USER',
+          approvalId: approved.id,
+          signal: controller.signal,
+        }),
+      );
+    }
+    if (resume?.denialText != null) {
+      observations.push({
+        tool: 'system',
+        callId: 'approval-denied',
+        ok: false,
+        text: resume.denialText,
+        truncated: false,
+        artifacts: [],
+        trust: 'USER',
+      });
+    }
 
     try {
       for (;;) {
@@ -203,7 +337,15 @@ export class Runner {
         const stepStart = clock.now();
 
         /* ── step.started — persisted before anything happens ──────────── */
-        const effectiveTrust: TrustLevel = 'USER';
+        // Computed, never assumed. This is the value the whole capability
+        // gate hangs off, so it is derived from the log every step rather
+        // than carried forward in a variable someone can forget to lower.
+        const effectiveTrust = this.trustForStep(
+          runId,
+          request.sessionId,
+          observations,
+          request.trigger === 'user' ? 'USER' : 'SYSTEM',
+        );
         events.append({
           type: 'step.started',
           payload: { index: stepIndex, effectiveTrust },
@@ -212,7 +354,9 @@ export class Runner {
           sessionId: request.sessionId,
           runId,
           stepId,
-          causationId: runStarted.id,
+          // A resumed run's steps are caused by the resumption, which the
+          // log already records; there is no new run.started to point at.
+          ...(runStarted !== null ? { causationId: runStarted.id } : {}),
           correlationId: runId,
         });
 
@@ -387,10 +531,62 @@ export class Runner {
               runId,
               stepId,
               principal: request.principal,
-              effectiveTrust: this.trustForStep(stepId, effectiveTrust),
+              effectiveTrust,
               signal: controller.signal,
             });
+            caps.toolCalls++;
             observations.push(observation);
+
+            /* ── a human is needed: park the run and let go (§19) ──────── */
+            if (observation.awaitingApproval !== undefined) {
+              const suspensions = this.deps.suspensions;
+              if (suspensions === undefined) {
+                // No parking space configured. Stopping honestly beats
+                // spinning on a call that can never proceed.
+                this.appendStepFinished(request, runId, stepId, stepIndex, 'tools', latencyMs);
+                caps.steps++;
+                return this.finish(
+                  runId, request, 'denied', caps, finalText, inputTokens, outputTokens,
+                );
+              }
+
+              this.appendStepFinished(request, runId, stepId, stepIndex, 'tools', latencyMs);
+              caps.steps++;
+
+              suspensions.suspend({
+                runId,
+                sessionId: request.sessionId,
+                principal: request.principal,
+                // The step that ASKED, so the resumed run re-enters here and
+                // the approved call keeps its idempotency key.
+                stepId,
+                stepIndex: caps.steps,
+                reason: 'approval',
+                resumeOn: observation.awaitingApproval.approvalId,
+                spend: {
+                  ...ZERO_SPEND(),
+                  steps: caps.steps,
+                  tokens: caps.tokens,
+                  costMicros: caps.costMicros,
+                  wallMs: clock.now() - caps.startedAt,
+                },
+              });
+
+              // Returning here is the point. No timer, no open promise, no
+              // in-memory continuation: a process killed now loses nothing,
+              // because it is holding nothing.
+              this.controllers.delete(runId);
+              return {
+                runId,
+                status: 'suspended',
+                reason: 'stop',
+                steps: caps.steps,
+                text: finalText,
+                inputTokens,
+                outputTokens,
+                costMicros: caps.costMicros,
+              };
+            }
           }
 
           if (loop === 'correct') {
@@ -511,20 +707,60 @@ export class Runner {
     if (caps.tokens >= limits.maxTokens) return 'token-cap';
     if (clock.now() - caps.startedAt >= limits.maxWallMs) return 'time-cap';
     if (caps.costMicros >= limits.maxCostMicros) return 'cost-cap';
+    if (caps.toolCalls >= limits.maxToolCalls) return 'tool-cap';
+
+    // The daily ledger (§19): a run can be inside every per-run limit and
+    // still be the four-hundredth retry of a $2 mistake. Checked between
+    // steps, where stopping is clean.
+    const ledger = this.deps.dailyLedger;
+    if (ledger !== undefined) {
+      const breach = ledger.admits(this.deps.dailyBudget ?? DEFAULT_DAILY_BUDGET);
+      if (breach !== null) return 'daily-cap';
+    }
     return null;
   }
 
   /**
-   * The trust a step runs at.
+   * The trust a step runs at: the minimum over its causal closure (§12.1).
    *
-   * Recomputed from the causal closure rather than carried forward, because
-   * a tool result appended during *this* step can lower it — which is
-   * exactly what must happen when a tool returns FOREIGN content.
+   * The closure of a model step is everything that influenced it — which is
+   * the entire run so far, plus the session history being replayed into the
+   * context, plus the tool results about to be fed in. Not just the current
+   * step.
+   *
+   * An earlier version of this scanned only events carrying the current
+   * stepId. That is a closure of one step, and it meant a FOREIGN tool
+   * result from step 2 left step 3 running at USER trust — so a web page
+   * could ask for a payment and get one. The injection corpus caught it.
+   *
+   * Cost is O(events in run + messages in session) per step. §32 flags this
+   * for M5's incremental assembler; correctness first.
    */
-  private trustForStep(stepId: string, fallback: TrustLevel): TrustLevel {
-    const stepEvents = this.deps.events.read({}).filter((e) => e.stepId === stepId);
+  private trustForStep(
+    runId: string,
+    sessionId: string,
+    observations: readonly Observation[],
+    fallback: TrustLevel,
+  ): TrustLevel {
     let lowest = fallback;
-    for (const event of stepEvents) lowest = minTrust(lowest, event.trust);
+
+    // Everything this run has already done.
+    for (const event of this.deps.events.read({ runId })) {
+      lowest = minTrust(lowest, event.trust);
+    }
+    // Everything being replayed into the context from earlier in the session:
+    // a FOREIGN page read an hour ago is still FOREIGN when it is quoted back.
+    for (const event of this.deps.events.read({
+      sessionId,
+      types: ['message.user', 'message.agent', 'message.system'],
+    })) {
+      lowest = minTrust(lowest, event.trust);
+    }
+    // And the results about to become this step's input.
+    for (const observation of observations) {
+      lowest = minTrust(lowest, observation.trust);
+    }
+
     return lowest;
   }
 
@@ -551,6 +787,7 @@ export class Runner {
       `Degradation level: ${level}`,
     ];
     return assembleContext({
+      fence: this.deps.fence ?? true,
       system: request.system ?? DEFAULT_SYSTEM,
       situation,
       history,

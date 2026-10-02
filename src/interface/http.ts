@@ -9,11 +9,14 @@
  * M2 ships the conversational subset. Memory, vault and approval routes
  * arrive with the milestones that make them mean something.
  */
+import { z } from 'zod';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { EventLog } from '../substrate/events/log.js';
 import type { Clock, Ids, Logger } from '../substrate/ports.js';
 import type { Storage } from '../substrate/ports.js';
 import { Runner, type RunOutcome } from '../orchestration/runner.js';
+import type { ApprovalScope, ApprovalStore } from '../capability/approvals.js';
+import type { Redactor } from '../substrate/events/redact.js';
 import { SseConnection, parseLastEventId, replayRun, toFrame } from './stream.js';
 
 export interface ApiDeps {
@@ -23,10 +26,23 @@ export interface ApiDeps {
   ids: Ids;
   logger: Logger;
   runner: Runner;
+  /** M4. Omitted means the approval routes 404 rather than lying. */
+  approvals?: ApprovalStore;
+  /** Redacts the SSE stream (§13). Supply it; the default is unredacted. */
+  redactor?: Redactor;
   /** Bearer token. §15: never a hardcoded user id — the token maps to one. */
   auth: { token: string; principal: string };
   degradation?: () => string;
 }
+
+/** §29: `{ decision, scope }`. Validated like every other boundary. */
+const ApprovalDecisionBody = z.object({
+  decision: z.enum(['approve', 'deny']),
+  scope: z.enum(['once', 'session', 'shape', 'always']).default('once'),
+  reason: z.string().max(500).optional(),
+  /** Fields to pin when scope is 'shape'. */
+  pin: z.array(z.string()).optional(),
+});
 
 interface Ctx {
   req: IncomingMessage;
@@ -250,6 +266,10 @@ export class Api {
       connection = new SseConnection({
         res: ctx.res,
         clock: this.deps.clock,
+        // The third exit from the system, after the log and the invoker.
+        // Live deltas never pass through the log, so without this a secret
+        // the model is mid-sentence quoting would stream straight out.
+        ...(this.deps.redactor !== undefined ? { redactor: this.deps.redactor } : {}),
         onClose: () => this.untrack(runId, listener),
       });
 
@@ -292,6 +312,69 @@ export class Api {
         cancelled,
         ...(cancelled ? {} : { detail: 'run is not currently executing' }),
       });
+    });
+
+    /* ── approvals (§29) ──────────────────────────────────────────────── */
+
+    this.add('GET', '/approvals', ({ res }) => {
+      const approvals = this.deps.approvals;
+      if (approvals === undefined) return json(res, 404, { error: 'approvals_not_configured' });
+      // Expire first: showing someone a question that can no longer be
+      // answered wastes the one bit of attention this mechanism gets.
+      approvals.expireStale();
+      json(res, 200, {
+        approvals: approvals.pending().map((record) => ({
+          id: record.id,
+          runId: record.runId,
+          tool: record.tool,
+          preview: record.preview,
+          risk: record.risk,
+          requestedAt: record.requestedAt,
+          expiresAt: record.expiresAt,
+        })),
+      });
+    });
+
+    this.add('POST', '/approvals/:id', async ({ res, params, principal, body }) => {
+      const approvals = this.deps.approvals;
+      if (approvals === undefined) return json(res, 404, { error: 'approvals_not_configured' });
+
+      const parsed = ApprovalDecisionBody.safeParse(await body());
+      if (!parsed.success) {
+        return json(res, 400, {
+          error: 'invalid_body',
+          detail: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
+        });
+      }
+
+      const record = approvals.get(params.id!);
+      if (record === undefined) return json(res, 404, { error: 'no_such_approval' });
+      if (record.state !== 'pending') {
+        return json(res, 409, {
+          error: 'already_answered',
+          state: record.state,
+          detail: 'a change of mind is a new request',
+        });
+      }
+
+      approvals.decide(params.id!, {
+        granted: parsed.data.decision === 'approve',
+        scope: parsed.data.scope as ApprovalScope,
+        by: principal,
+        ...(parsed.data.reason !== undefined ? { reason: parsed.data.reason } : {}),
+        ...(parsed.data.pin !== undefined ? { pin: parsed.data.pin } : {}),
+      });
+
+      // Resuming is the slow part, and the caller does not need to wait for
+      // the model. 202 plus the run id, exactly like sending a message.
+      void this.deps.runner.resume(params.id!).catch((err: unknown) => {
+        this.deps.logger.error('resume failed', {
+          approvalId: params.id,
+          message: (err as Error).message,
+        });
+      });
+
+      json(res, 202, { approvalId: params.id, runId: record.runId, resumed: true });
     });
 
     this.add('GET', '/runs/:id/trace', ({ res, params }) => {

@@ -12,6 +12,7 @@ import { createTestSubstrate } from '../src/substrate/index.js';
 import { Invoker } from '../src/capability/invoke.js';
 import { ToolRegistry } from '../src/capability/registry.js';
 import { registerBuiltins } from '../src/tools/index.js';
+import { DEFAULT_GRANTS } from '../src/capability/policy.js';
 import { reconcile } from '../src/capability/outbox.js';
 import { Redactor } from '../src/substrate/events/redact.js';
 import type { Tool, ToolContext } from '../src/capability/tool.js';
@@ -83,6 +84,7 @@ function boot(seed: number) {
   registry.register(pay);
   const invoker = new Invoker({
     registry,
+    grants: DEFAULT_GRANTS,
     events: substrate.events,
     storage: substrate.storage,
     clock: substrate.clock,

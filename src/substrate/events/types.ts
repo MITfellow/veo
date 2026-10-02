@@ -101,6 +101,15 @@ export const STOP_REASONS = [
   'cost-cap',
   'tools-unavailable',
   'loop-detected',
+  // M4 budgets (§19). One reason per dimension rather than a single
+  // 'budget-cap': "it stopped" is not an explanation (invariant 15), and
+  // "you have spent today's token budget" leads somewhere different from
+  // "this run made too many tool calls".
+  'egress-cap',
+  'tool-cap',
+  'daily-cap',
+  'denied',
+  'approval-expired',
 ] as const;
 export const StopReasonSchema = z.enum(STOP_REASONS);
 
@@ -172,6 +181,26 @@ const ApprovalRequested = z.object({
 const ApprovalGranted = z.object({ scope: z.enum(['once', 'session', 'shape', 'always']) });
 const ApprovalDenied = z.object({ scope: z.enum(['once', 'always']), reason: z.string().optional() });
 const ApprovalExpired = z.object({ afterMs: z.number().int().nonnegative() });
+
+/**
+ * One outbound request that was allowed, with its size.
+ *
+ * Added at M4 (decision 021). §9 says the type list is closed and extended
+ * deliberately — this is the deliberate extension. Two reasons it has to be
+ * an event rather than a counter: §19 requires a *daily* egress budget, and
+ * a number that is not in the log cannot be rebuilt (invariant 1); and §14's
+ * audit question — "what did my agent talk to, and how much did it send?" —
+ * is unanswerable without a positive record. Denials are already logged as
+ * `policy.denied`; this is their counterpart.
+ */
+const EgressAllowed = z.object({
+  tool: z.string(),
+  host: z.string(),
+  method: z.string(),
+  bytes: z.number().int().nonnegative(),
+  requestBytes: z.number().int().nonnegative().default(0),
+  status: z.number().int().optional(),
+});
 
 const PolicyDenied = z.object({
   tool: z.string(),
@@ -318,6 +347,8 @@ export const EVENT_SCHEMAS = {
   'approval.granted': ApprovalGranted,
   'approval.denied': ApprovalDenied,
   'approval.expired': ApprovalExpired,
+
+  'egress.allowed': EgressAllowed,
 
   'policy.denied': PolicyDenied,
   'policy.escalated': PolicyEscalated,

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { DEFAULT_GRANTS } from '../../src/capability/policy.js';
 import { rmSync } from 'node:fs';
 import { Invoker } from '../../src/capability/invoke.js';
 import { ToolRegistry } from '../../src/capability/registry.js';
@@ -59,6 +60,7 @@ function boot(remote: FakeRemote, options: { dbPath?: string; seed?: number; que
   );
   const invoker = new Invoker({
     registry,
+    grants: DEFAULT_GRANTS,
     events: substrate.events,
     storage: substrate.storage,
     clock: substrate.clock,

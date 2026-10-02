@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { DEFAULT_GRANTS } from '../../src/capability/policy.js';
 import { Runner } from '../../src/orchestration/runner.js';
 import { Invoker } from '../../src/capability/invoke.js';
 import { ToolRegistry } from '../../src/capability/registry.js';
@@ -30,6 +31,7 @@ function invokerOnly(tools: Tool<any, any>[] = []): Invoker {
   for (const tool of tools) registry.register(tool);
   return new Invoker({
     registry,
+    grants: DEFAULT_GRANTS,
     events: substrate.events,
     storage: substrate.storage,
     clock: substrate.clock,
@@ -49,6 +51,7 @@ function runnerWith(model: FakeModel, tools: Tool<any, any>[] = []): Runner {
 
   const invoker = new Invoker({
     registry,
+    grants: DEFAULT_GRANTS,
     events: substrate.events,
     storage: substrate.storage,
     clock: substrate.clock,

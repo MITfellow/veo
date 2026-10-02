@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { DEFAULT_GRANTS } from '../../src/capability/policy.js';
 import { z } from 'zod';
 import { Invoker } from '../../src/capability/invoke.js';
 import { ToolRegistry } from '../../src/capability/registry.js';
@@ -36,6 +37,7 @@ function invokerWith(tools: Tool<any, any>[]): Invoker {
   for (const tool of tools) registry.register(tool);
   return new Invoker({
     registry,
+    grants: DEFAULT_GRANTS,
     events: substrate.events,
     storage: substrate.storage,
     clock: substrate.clock,

@@ -173,10 +173,14 @@ export class ScopedNetImpl implements ScopedNet {
       }
 
       await this.pinDns(url);
+      const outbound = request.body === undefined ? 0 : byteLength(request.body);
       this.chargeOutbound(request);
 
       const response = await this.options.net.fetch(this.toPortRequest(url, method, request));
       this.chargeInbound(response, url);
+      // Logged per hop: a redirect chain that moves bytes moved them, and an
+      // audit that only shows the final URL hides where the data went.
+      this.recordAllowed({ ...request, url }, response, outbound);
 
       if (isRedirect(response.status)) {
         const location = response.headers.location ?? response.headers.Location;
@@ -228,6 +232,38 @@ export class ScopedNetImpl implements ScopedNet {
       throw new EgressDenied(reason, url);
     }
     this.charge(response.body.byteLength, 'inbound', url);
+  }
+
+  /**
+   * Record a completed request (M4, decision 021).
+   *
+   * Written after the transfer, not before, because the byte count is the
+   * point and it is not known until then. A request that throws mid-flight
+   * is recorded by the denial/error path instead, so nothing is silent.
+   */
+  private recordAllowed(
+    request: ScopedNetRequest,
+    response: NetResponse,
+    outbound: number,
+  ): void {
+    this.options.events.append({
+      type: 'egress.allowed',
+      payload: {
+        tool: this.options.tool,
+        host: new URL(request.url).hostname,
+        method: (request.method ?? 'GET').toUpperCase(),
+        bytes: response.body.byteLength,
+        requestBytes: outbound,
+        status: response.status,
+      },
+      principal: this.options.principal,
+      // The event describes OUR outbound action, so it is recorded at the
+      // trust of the step that caused it — not at the trust of whatever
+      // came back, which is the response's business.
+      trust: this.options.effectiveTrust,
+      runId: this.options.runId,
+      stepId: this.options.stepId,
+    });
   }
 
   private charge(bytes: number, direction: 'inbound' | 'outbound', url: string): void {
