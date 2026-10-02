@@ -61,3 +61,39 @@ describe('substrate performance budgets', () => {
     s.close();
   });
 });
+
+describe('§32 explicit budgets', () => {
+  it('appends a single event in under 2ms (p95)', () => {
+    const s = createTestSubstrate();
+    // Warm the prepared statements first; §32's budget is steady-state, not
+    // first-call.
+    for (let i = 0; i < 100; i++) {
+      s.clock.advance(1);
+      s.events.append({
+        type: 'message.user',
+        payload: { text: 'warmup', attachments: [] },
+        principal: 'user:ara',
+        trust: 'USER',
+        sessionId: 'sess-warm',
+      });
+    }
+
+    const samples: number[] = [];
+    for (let i = 0; i < 500; i++) {
+      s.clock.advance(1);
+      const t = performance.now();
+      s.events.append({
+        type: 'message.user',
+        payload: { text: `measured ${i}`, attachments: [] },
+        principal: 'user:ara',
+        trust: 'USER',
+        sessionId: 'sess-measure',
+      });
+      samples.push(performance.now() - t);
+    }
+    samples.sort((a, b) => a - b);
+    const p95 = samples[Math.floor(samples.length * 0.95)] ?? 0;
+    expect(p95, `append p95 was ${p95.toFixed(3)}ms`).toBeLessThan(2);
+    s.close();
+  });
+});
