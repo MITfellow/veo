@@ -175,6 +175,9 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
     // Warms the recall cache with the user's own words before the run
     // assembles its context; see StoredMemorySource.
     beforeRun: (principal, sessionId, text) => memory.prime(principal, sessionId, text),
+    // §22.8's user-control routes. Mandatory, not optional: a store nobody
+    // can inspect is a store nobody should accept.
+    memory,
   });
 
   const server = api.server();

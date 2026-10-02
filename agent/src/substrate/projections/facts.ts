@@ -166,8 +166,12 @@ export const factsProjector: Projector = {
         // from never-happened, and would break the audit trail of deletions.
         const rows = storage.all<FactRowId>('SELECT id FROM facts WHERE fact_id = ?', [p.factId]);
         storage.run(
+          // Unpinned too: a pin is a standing instruction to keep something
+          // in every conversation, and a destroyed belief cannot be kept in
+          // anything. Leaving the flag set left the inspector showing
+          // "PINNED" on a memory that no longer exists.
           `UPDATE facts SET object = ?, status = 'retired', superseded_at = COALESCE(superseded_at, ?),
-             key_id = ?, confidence = 0 WHERE fact_id = ?`,
+             key_id = ?, confidence = 0, pinned = 0 WHERE fact_id = ?`,
           [canonicalJson({ $shredded: true, keyId: p.keyId }), e.ts, p.keyId, p.factId],
         );
         for (const r of rows) {

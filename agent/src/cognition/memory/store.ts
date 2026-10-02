@@ -239,6 +239,23 @@ export class MemoryStore {
     return row === undefined ? undefined : toFact(row);
   }
 
+  /**
+   * Any version of a belief, including one whose transaction time is closed.
+   *
+   * `get()` deliberately hides corrected beliefs from the agent — a
+   * retracted fact must not come back as something it knows. But the
+   * *inspector* has to show it: a correction the user can no longer open is
+   * a correction they cannot verify happened, and §22.8 exists precisely so
+   * someone can audit what the agent did with their words.
+   */
+  getAny(factId: string): Fact | undefined {
+    const row = this.deps.storage.get<FactRow>(
+      `SELECT ${FACT_COLUMNS} FROM facts WHERE fact_id = ? ORDER BY recorded_at DESC LIMIT 1`,
+      [factId],
+    );
+    return row === undefined ? undefined : toFact(row);
+  }
+
   /** Every version of one belief, oldest first — the "explain" view (§22.8). */
   history(factId: string): Fact[] {
     return this.deps.storage
@@ -265,6 +282,56 @@ export class MemoryStore {
         [principal, limit],
       )
       .map(toFact);
+  }
+
+  /**
+   * Everything, for the user's own eyes (§22.8).
+   *
+   * Distinct from `recallable()` on purpose: recall is what the agent gets
+   * to use, this is what the person gets to see. The quarantined claim that
+   * must never reach a prompt is exactly the thing someone most wants shown
+   * — "here is what a web page tried to make me believe about you" — so
+   * filtering it out of the inspector would defeat the point.
+   */
+  allFacts(principal: string, options: { includeInactive?: boolean } = {}): Fact[] {
+    const statusFilter =
+      options.includeInactive === true ? '' : " AND status IN ('active','disputed')";
+    return this.deps.storage
+      .all<FactRow>(
+        `SELECT ${FACT_COLUMNS} FROM facts
+         WHERE principal = ?${statusFilter}
+         ORDER BY pinned DESC, recorded_at DESC`,
+        [principal],
+      )
+      .map(toFact);
+  }
+
+  /**
+   * What the gate turned away (§22.5, decision 027).
+   *
+   * Surfaced to the user because over-rejection is otherwise undetectable:
+   * a memory that was never written leaves no trace in the store, and "why
+   * don't you know that?" has no answer without this list.
+   */
+  rejections(
+    principal: string,
+    limit = 50,
+  ): Array<{ reason: string; predicate: string; subjectHint: string; ts: number }> {
+    return this.deps.storage
+      .all<{ payload: string; ts: number }>(
+        `SELECT payload, ts FROM events
+         WHERE type = 'memory.rejected' AND principal = ?
+         ORDER BY seq DESC LIMIT ?`,
+        [principal, limit],
+      )
+      .map((row) => {
+        const payload = JSON.parse(row.payload) as {
+          reason: string;
+          predicate: string;
+          subjectHint: string;
+        };
+        return { ...payload, ts: row.ts };
+      });
   }
 
   pinned(principal: string): Fact[] {
@@ -777,6 +844,10 @@ const PHRASING: Record<string, (subject: string, object: string) => string> = {
  * "you daughter Noor" is the kind of line that makes a model write like a
  * telegram. These read as possessives instead.
  */
+function isShredded(object: unknown): boolean {
+  return typeof object === 'object' && object !== null && '$shredded' in object;
+}
+
 const RELATIONS = new Set([
   'daughter', 'son', 'child', 'partner', 'spouse', 'wife', 'husband',
   'mother', 'father', 'sister', 'brother', 'manager', 'employer',
@@ -784,6 +855,12 @@ const RELATIONS = new Set([
 ]);
 
 export function factLine(fact: Fact): string {
+  // A shredded fact has no content left — only the marker that says content
+  // was destroyed here. Rendering the marker's JSON would show the user a
+  // key id where their sentence used to be, which reads like a bug rather
+  // than like the deliberate destruction it was.
+  if (isShredded(fact.object)) return '(forgotten — the content was destroyed)';
+
   const object =
     typeof fact.object === 'string' ? fact.object : canonicalJson(fact.object).replace(/^"|"$/g, '');
   const subject = fact.subject.id === 'self' ? 'you' : fact.subject.label;

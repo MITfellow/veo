@@ -16,6 +16,47 @@
  *   testable without a browser.
  */
 
+/* ─────────────────────────── §22.8: memory ──────────────────────────────── */
+
+export interface MemoryFact {
+  id: string;
+  text: string;
+  predicate: string;
+  basis: 'observed' | 'inferred' | 'asserted_by_user' | 'imported';
+  confidence: number;
+  sourceCount: number;
+  observationCount: number;
+  status: 'active' | 'disputed' | 'quarantined' | 'retired';
+  pinned: boolean;
+  sensitivity: 'normal' | 'private' | 'secret';
+  trust: string;
+  recordedAt: number;
+  validTo: number | null;
+}
+
+export interface MemoryCounts {
+  active: number;
+  disputed: number;
+  quarantined: number;
+  retired: number;
+  pinned: number;
+}
+
+export interface MemoryExplanation {
+  fact: MemoryFact;
+  sources: Array<{ eventId: string; quote?: string }>;
+  history: Array<{ text: string; recordedAt: number; confidence: number; status: string }>;
+  explanation: string[];
+}
+
+export interface MemoryFilter {
+  q?: string;
+  basis?: string;
+  minConfidence?: number;
+  status?: string;
+  pinned?: boolean;
+}
+
 export interface AgentSession {
   id: string;
   title: string | null;
@@ -69,6 +110,13 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     response = await fetch(`${BASE}${path}`, {
       ...init,
+      // Every one of these reads mutable state, and some of it changes in
+      // response to the click that triggered the read. Chrome was reusing
+      // an identical earlier GET from its memory cache — pinning a memory
+      // and immediately re-listing returned the pre-pin copy — so the
+      // client says what it means rather than trusting the server's
+      // `cache-control` to be honoured in every browser.
+      cache: 'no-store',
       headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
     });
   } catch (error) {
@@ -102,6 +150,57 @@ export const agent = {
       method: 'POST',
       body: JSON.stringify({ text }),
     });
+  },
+
+  /* ───────────────── §22.8 — see it, and rip it out ─────────────────────── */
+
+  async memory(filter: MemoryFilter = {}): Promise<{
+    facts: MemoryFact[];
+    total: number;
+    counts: MemoryCounts;
+  }> {
+    const params = new URLSearchParams();
+    if (filter.q !== undefined && filter.q !== '') params.set('q', filter.q);
+    if (filter.basis !== undefined && filter.basis !== '') params.set('basis', filter.basis);
+    if (filter.status !== undefined) params.set('status', filter.status);
+    if (filter.minConfidence !== undefined) params.set('minConfidence', String(filter.minConfidence));
+    if (filter.pinned !== undefined) params.set('pinned', String(filter.pinned));
+    const query = params.toString();
+    return call(`/memory${query === '' ? '' : `?${query}`}`);
+  },
+
+  async explainMemory(id: string): Promise<MemoryExplanation> {
+    return call(`/memory/${id}`);
+  },
+
+  async pinMemory(id: string, pinned: boolean): Promise<void> {
+    await call(`/memory/${id}/pin`, { method: 'POST', body: JSON.stringify({ pinned }) });
+  },
+
+  async correctMemory(id: string, correction: string): Promise<void> {
+    await call(`/memory/${id}/correct`, {
+      method: 'POST',
+      body: JSON.stringify({ correction }),
+    });
+  },
+
+  async forgetMemory(id: string): Promise<void> {
+    await call(`/memory/${id}`, { method: 'DELETE' });
+  },
+
+  async forgetEverything(subject = 'self'): Promise<{ forgotten: string[] }> {
+    return call(`/memory?subject=${encodeURIComponent(subject)}`, { method: 'DELETE' });
+  },
+
+  async memoryDigest(): Promise<{
+    entries: Array<{ id: string; text: string; createdAt: number }>;
+    identity: { text: string; tokens: number; updatedAt: number } | null;
+  }> {
+    return call('/memory/digest');
+  },
+
+  async exportMemory(): Promise<unknown> {
+    return call('/memory/export');
   },
 
   async approvals(): Promise<PendingApproval[]> {

@@ -18,6 +18,9 @@ import { Runner, type RunOutcome } from '../orchestration/runner.js';
 import type { ApprovalScope, ApprovalStore } from '../capability/approvals.js';
 import type { Redactor } from '../substrate/events/redact.js';
 import { SseConnection, parseLastEventId, replayRun, toFrame } from './stream.js';
+import type { MemoryService } from '../cognition/memory/service.js';
+import { factLine } from '../cognition/memory/store.js';
+import type { Fact } from '../cognition/memory/types.js';
 
 export interface ApiDeps {
   events: EventLog;
@@ -39,6 +42,11 @@ export interface ApiDeps {
    * assembly. Optional, and its rejection is swallowed by design.
    */
   beforeRun?: (principal: string, sessionId: string, text: string) => Promise<void>;
+  /**
+   * The memory store, for §22.8's user-control routes. Omitted means those
+   * routes 404 rather than pretending the agent has no memory.
+   */
+  memory?: MemoryService;
 }
 
 /** §29: `{ decision, scope }`. Validated like every other boundary. */
@@ -69,6 +77,16 @@ interface Route {
   /** Health must answer even when auth is misconfigured. */
   public?: boolean;
 }
+
+/** §22.8's list filters, validated like every other boundary. */
+const MemoryQuery = z.object({
+  q: z.string().max(200).optional(),
+  basis: z.enum(['observed', 'inferred', 'asserted_by_user', 'imported']).optional(),
+  minConfidence: z.coerce.number().min(0).max(1).optional(),
+  status: z.enum(['active', 'disputed', 'quarantined', 'retired', 'all']).default('active'),
+  pinned: z.enum(['true', 'false']).optional(),
+  limit: z.coerce.number().int().min(1).max(500).default(100),
+});
 
 export class Api {
   private readonly routes: Route[] = [];
@@ -409,6 +427,189 @@ export class Api {
         steps: storage.all('SELECT * FROM steps WHERE run_id = ? ORDER BY idx', [runId]),
       });
     });
+
+    /* ───────────────────── §22.8 — what the agent knows ──────────────────── */
+
+    // These are not an admin panel. §22.8: "a person only lets an agent this
+    // deep into their life if they can see and rip out what it knows." The
+    // routes exist so the Veo client can show someone their own memory and
+    // destroy any of it, without asking the agent nicely in conversation.
+
+    const memory = this.deps.memory;
+
+    this.add('GET', '/memory', ({ res, url, principal }) => {
+      if (memory === undefined) return json(res, 404, { error: 'no_memory' });
+      const parsed = MemoryQuery.safeParse(Object.fromEntries(url.searchParams));
+      if (!parsed.success) {
+        return json(res, 400, { error: 'bad_request', detail: parsed.error.issues });
+      }
+      const query = parsed.data;
+
+      const all = memory.store.allFacts(principal, {
+        includeInactive: query.status !== 'active',
+      });
+      const matched = all.filter((fact) => {
+        if (query.status !== 'all' && fact.status !== query.status) return false;
+        if (query.basis !== undefined && fact.basis !== query.basis) return false;
+        if (query.minConfidence !== undefined && fact.confidence < query.minConfidence) return false;
+        if (query.pinned !== undefined && fact.pinned !== (query.pinned === 'true')) return false;
+        if (query.q !== undefined && query.q !== '') {
+          const haystack = `${factLine(fact)} ${fact.predicate}`.toLowerCase();
+          if (!haystack.includes(query.q.toLowerCase())) return false;
+        }
+        return true;
+      });
+
+      json(res, 200, {
+        facts: matched.slice(0, query.limit).map(summarise),
+        total: matched.length,
+        // The counts the UI needs to be honest about what it is not showing.
+        counts: {
+          active: all.filter((fact) => fact.status === 'active').length,
+          disputed: all.filter((fact) => fact.status === 'disputed').length,
+          quarantined: all.filter((fact) => fact.status === 'quarantined').length,
+          retired: all.filter((fact) => fact.status === 'retired').length,
+          pinned: all.filter((fact) => fact.pinned).length,
+        },
+      });
+    });
+
+    this.add('GET', '/memory/digest', ({ res, principal }) => {
+      if (memory === undefined) return json(res, 404, { error: 'no_memory' });
+      // Build the card if consolidation has not run yet, rather than
+      // showing someone an empty panel for their first twelve episodes.
+      // It is a pure function of the store, so computing it on demand costs
+      // nothing and is never stale.
+      const identity =
+        memory.store.identityCard(principal) ??
+        (memory.store.recallable(principal, 1).length > 0
+          ? memory.consolidator.identityCard(principal, this.deps.clock.now())
+          : null);
+      json(res, 200, {
+        entries: memory.store.digest(principal, 10),
+        identity: identity === null ? null : { text: identity.text, updatedAt: this.deps.clock.now() },
+      });
+    });
+
+    this.add('GET', '/memory/export', ({ res, principal }) => {
+      if (memory === undefined) return json(res, 404, { error: 'no_memory' });
+      // Everything, including what was retired and what was refused. An
+      // export that quietly omits the inconvenient parts is not an export.
+      const facts = memory.store.allFacts(principal, { includeInactive: true });
+      json(res, 200, {
+        exportedAt: this.deps.clock.now(),
+        principal,
+        facts: facts.map((fact) => ({
+          ...fact,
+          text: factLine(fact),
+          history: memory.store.history(fact.id).map((version) => ({
+            text: factLine(version),
+            recordedAt: version.recordedAt,
+            confidence: version.confidence,
+            status: version.status,
+          })),
+        })),
+        rules: memory.store.allRules(principal),
+        refused: memory.store.rejections(principal, 200),
+      });
+    });
+
+    this.add('GET', '/memory/:id', ({ res, params }) => {
+      if (memory === undefined) return json(res, 404, { error: 'no_memory' });
+      // `getAny`, not `get`: a corrected or retired belief is hidden from
+      // the agent but must stay visible to the person auditing it.
+      const fact = memory.store.getAny(params.id!);
+      if (fact === undefined) return json(res, 404, { error: 'no_such_fact' });
+
+      // §22.8's "explain": source text, date, confidence, reasoning chain,
+      // in plain language. The chain is the point — a confidence number with
+      // no story behind it is the thing §24.1 calls a lie with a decimal.
+      json(res, 200, {
+        fact: summarise(fact),
+        sources: fact.sources,
+        history: memory.store.history(fact.id).map((version) => ({
+          text: factLine(version),
+          recordedAt: version.recordedAt,
+          validFrom: version.validFrom,
+          validTo: version.validTo,
+          confidence: version.confidence,
+          status: version.status,
+        })),
+        explanation: explain(fact),
+      });
+    });
+
+    this.add('POST', '/memory/:id/pin', async ({ res, params, body, principal }) => {
+      if (memory === undefined) return json(res, 404, { error: 'no_memory' });
+      const input = (await body()) as { pinned?: boolean } | null;
+      if (memory.store.get(params.id!) === undefined) {
+        return json(res, 404, { error: 'no_such_fact' });
+      }
+      const pinned = input?.pinned ?? true;
+      memory.store.pin(params.id!, pinned, principal, 'USER');
+      json(res, 200, { id: params.id, pinned });
+    });
+
+    this.add('POST', '/memory/:id/correct', async ({ res, params, body, principal }) => {
+      if (memory === undefined) return json(res, 404, { error: 'no_memory' });
+      const input = (await body()) as { correction?: string } | null;
+      const correction = input?.correction;
+      if (typeof correction !== 'string' || correction.trim() === '') {
+        return json(res, 400, { error: 'bad_request', detail: 'correction is required' });
+      }
+      const fact = memory.store.get(params.id!);
+      if (fact === undefined) return json(res, 404, { error: 'no_such_fact' });
+
+      memory.store.correct({
+        factId: fact.id,
+        principal,
+        trust: 'USER',
+        was: fact.object,
+        now: correction,
+        by: 'user',
+      });
+      // The replacement outranks whatever it replaced: the user said it.
+      const id = memory.store.write({
+        principal,
+        subject: fact.subject,
+        predicate: fact.predicate,
+        object: correction,
+        basis: 'asserted_by_user',
+        confidence: 0.9,
+        sources: fact.sources,
+        trust: 'USER',
+        stability: fact.stability,
+        sensitivity: fact.sensitivity,
+      });
+      json(res, 200, { corrected: fact.id, replacement: id });
+    });
+
+    this.add('DELETE', '/memory/:id', ({ res, params, url, principal }) => {
+      if (memory === undefined) return json(res, 404, { error: 'no_memory' });
+      if (memory.store.get(params.id!) === undefined) {
+        return json(res, 404, { error: 'no_such_fact' });
+      }
+      const reason = url.searchParams.get('reason') ?? 'the user deleted it';
+      memory.store.forget(params.id!, reason, principal, 'USER');
+      // 200, not 204: the client needs to be told the content is destroyed
+      // rather than hidden, and a bare 204 says nothing.
+      json(res, 200, { forgotten: params.id, shredded: true });
+    });
+
+    this.add('DELETE', '/memory', ({ res, url, principal }) => {
+      if (memory === undefined) return json(res, 404, { error: 'no_memory' });
+      const subject = url.searchParams.get('subject');
+      if (subject === null) {
+        return json(res, 400, {
+          error: 'bad_request',
+          detail: "refusing to forget everything without a subject; pass ?subject=self or an entity id",
+        });
+      }
+      const reason = url.searchParams.get('reason') ?? `the user asked to forget ${subject}`;
+      const targets = memory.store.bySubject(subject, { includeInactive: true });
+      for (const fact of targets) memory.store.forget(fact.id, reason, principal, 'USER');
+      json(res, 200, { forgotten: targets.map((fact) => fact.id), shredded: true });
+    });
   }
 
   /* ───────────────────────────── live plumbing ──────────────────────────── */
@@ -443,11 +644,88 @@ export class Api {
 
 /* ──────────────────────────────── helpers ───────────────────────────────── */
 
+/** The shape §22.8's list and explain views both need. */
+function summarise(fact: Fact) {
+  return {
+    id: fact.id,
+    text: factLine(fact),
+    subject: fact.subject,
+    predicate: fact.predicate,
+    object: fact.object,
+    basis: fact.basis,
+    confidence: fact.confidence,
+    sourceCount: fact.sources.length,
+    observationCount: fact.observationCount,
+    status: fact.status,
+    pinned: fact.pinned,
+    sensitivity: fact.sensitivity,
+    stability: fact.stability,
+    trust: fact.trust,
+    recordedAt: fact.recordedAt,
+    validFrom: fact.validFrom,
+    validTo: fact.validTo,
+  };
+}
+
+/**
+ * The reasoning chain, in plain language (§22.8).
+ *
+ * Deliberately generated here rather than by the model: an explanation
+ * written by the same thing that might be wrong is a story, not an audit.
+ * This reads the record and says what it says.
+ */
+function explain(fact: Fact): string[] {
+  const lines: string[] = [];
+  const when = new Date(fact.recordedAt).toISOString().slice(0, 10);
+
+  if (fact.basis === 'asserted_by_user') {
+    lines.push(`You told me this on ${when}.`);
+  } else if (fact.basis === 'inferred') {
+    lines.push(`I worked this out on ${when} — you did not say it outright.`);
+  } else if (fact.basis === 'observed') {
+    lines.push(`I noticed this on ${when} from how a conversation went.`);
+  } else {
+    lines.push(`This was imported on ${when}.`);
+  }
+
+  for (const source of fact.sources) {
+    if (source.quote !== undefined) lines.push(`The words it came from: "${source.quote}"`);
+  }
+
+  if (fact.observationCount > 1) {
+    lines.push(`I have seen this ${fact.observationCount} times, which is why I am more sure of it.`);
+  }
+  lines.push(`I am about ${Math.round(fact.confidence * 100)}% sure.`);
+
+  if (fact.status === 'disputed') {
+    lines.push('I have conflicting information about this, so I will ask rather than assert it.');
+  }
+  if (fact.status === 'quarantined') {
+    lines.push(
+      'This came from untrusted content, so it is quarantined: I keep it only so you can see ' +
+        'what was claimed. It never reaches a conversation.',
+    );
+  }
+  if (fact.validTo !== null) {
+    lines.push(`This stopped being true on ${new Date(fact.validTo).toISOString().slice(0, 10)}.`);
+  }
+  if (fact.pinned) lines.push('You pinned this, so it is in every conversation.');
+
+  return lines;
+}
+
 function json(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(payload),
+    // Every response here is a view of mutable state, and some of it is the
+    // most sensitive text in the system. Without this header a browser is
+    // free to apply heuristic freshness to a GET with no validators — which
+    // it does: pinning a memory and re-reading the list returned the stale
+    // pre-pin copy from cache, and the UI looked broken for a reason that
+    // was nowhere in the UI.
+    'cache-control': 'no-store',
   });
   res.end(payload);
 }
