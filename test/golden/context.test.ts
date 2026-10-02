@@ -1,86 +1,113 @@
-import { describe, expect, it } from 'vitest';
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { assembleContext, type Turn } from '../../src/cognition/context/assemble.js';
-
 /**
- * Golden test (§31).
+ * Golden tests for the assembled context (§21, §31).
  *
- * The assembled context is the single most consequential artifact in the
- * system — it is what the model actually sees — and it is assembled by code
- * that will be rewritten at M5, M6 and M7. A golden file makes every change
- * to it *visible in review* rather than discovered in behaviour six months
- * later.
+ * §21 asks for roughly twelve scenarios, and here they are: cold start, long
+ * session, memory-dense, tool-dense, post-compaction, near-overflow,
+ * degraded, FOREIGN present, low-confidence, pinned, constraints, and
+ * everything at once.
  *
- * Regenerate deliberately with `UPDATE_GOLDEN=1 npx vitest run test/golden`,
- * and read the diff before committing it. A golden file updated without
- * reading the diff is worse than no golden file.
+ * The assembled context is the most consequential artifact in the system —
+ * it is literally what the model sees — and it is produced by code that will
+ * keep being rewritten at M6 and M7. A golden file makes every change to it
+ * *visible in review* rather than discovered in behaviour six months later.
+ *
+ * Regenerate deliberately:
+ *
+ *     UPDATE_GOLDEN=1 npx vitest run test/golden
+ *
+ * and read the diff before committing it. §21: "a diff in a golden file is a
+ * deliberate behavioural change and must be reviewed as such." A golden file
+ * updated without reading the diff is worse than no golden file.
  */
+import { describe, expect, it } from 'vitest';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { assembleContext } from '../../src/cognition/context/assemble.js';
+import { policyFor } from '../../src/cognition/context/policy.js';
+import { SCENARIOS, T0 } from '../fixtures/snapshots.js';
+import type { StateSnapshot } from '../../src/cognition/context/types.js';
+import type { TrustLevel } from '../../src/substrate/events/types.js';
 
-const GOLDEN = new URL('./context.golden.txt', import.meta.url).pathname;
+const DIR = new URL('./context/', import.meta.url).pathname;
 
-function fixedSession(): Turn[] {
-  const topics = [
-    'I am moving to Lisbon in March.',
-    'That is a big change. What is taking you there?',
-    'A job at a climate startup.',
-    'Congratulations. Do you have somewhere to live yet?',
-    'Not yet. I am looking in Alfama.',
-    'Alfama is beautiful but noisy at night. Worth visiting before you commit.',
-    'Good point. My sister visited last year.',
-    'Did she have a view on it?',
-    'She loved it. She stayed near the castle.',
-    'Then you have a local guide. When do you fly?',
-    'The 14th of March.',
-    'Noted. I will keep that date in mind.',
-  ];
-  return topics.map((content, i) => ({
-    role: i % 2 === 0 ? ('user' as const) : ('assistant' as const),
-    content,
-    trust: i % 2 === 0 ? ('USER' as const) : ('DERIVED' as const),
-    id: `turn-${String(i).padStart(2, '0')}`,
-  }));
-}
+/** Deliberately small windows: a golden file nobody can read is not evidence. */
+const WINDOWS: Record<string, number> = {
+  'cold-start': 4_000,
+  'long-session': 2_000,
+  'memory-dense': 4_000,
+  'tool-dense': 3_000,
+  'post-compaction': 4_000,
+  'near-overflow': 2_400,
+  degraded: 4_000,
+  'foreign-present': 4_000,
+  'low-confidence': 4_000,
+  pinned: 2_000,
+  constraints: 4_000,
+  everything: 4_000,
+};
 
-function render(): string {
+const TRUST: Record<string, TrustLevel> = { 'foreign-present': 'DERIVED' };
+
+function render(name: string, snapshot: StateSnapshot): string {
+  const window = WINDOWS[name] ?? 4_000;
   const result = assembleContext({
-    system: 'You are a personal agent. You are careful, concrete and honest.',
-    situation: ['Current time: 2026-03-01T09:00:00.000Z', 'Degradation level: L0'],
-    history: fixedSession(),
-    maxTokens: 120,
-    countTokens: (text: string) => Math.ceil(text.length / 4),
+    principal: 'user:ara',
+    sessionId: 'ses-golden',
+    trust: TRUST[name] ?? 'USER',
+    now: T0,
+    policy: policyFor('golden-model', { window, reserveForOutput: 0 }),
+    snapshot,
   });
 
-  const lines: string[] = [];
-  lines.push(`total_tokens: ${result.totalTokens}`);
-  lines.push(`truncated: ${result.truncated}`);
-  lines.push('');
-  lines.push('blocks:');
-  for (const block of result.blocks) {
-    lines.push(`  ${block.name}: tokens=${block.tokens} items=${block.items}`);
-  }
-  lines.push('');
-  lines.push('evictions:');
-  for (const eviction of result.evictions) {
-    lines.push(`  ${eviction.id} (${eviction.reason}, ${eviction.tokens} tokens)`);
-  }
-  lines.push('');
-  lines.push('messages:');
+  const lines = [
+    `scenario: ${name}`,
+    `window: ${window}`,
+    `policy: ${result.policyVersion}`,
+    `digest: ${result.digest}`,
+    `total_tokens: ${result.totalTokens}`,
+    `truncated: ${result.truncated}`,
+    '',
+    'blocks:',
+    ...result.blocks.map((block) => `  ${block.name}: tokens=${block.tokens} items=${block.items}`),
+    '',
+    'tools offered:',
+    ...result.tools.map((tool) => `  ${tool.name}`),
+    '',
+    `evictions: ${result.evictions.length}`,
+    ...result.evictions
+      .slice(0, 8)
+      .map((eviction) => `  ${eviction.block}/${eviction.id} (${eviction.reason}, ${eviction.tokens} tokens)`),
+    ...(result.evictions.length > 8 ? [`  …and ${result.evictions.length - 8} more`] : []),
+    '',
+    'messages:',
+  ];
   for (const message of result.messages) {
-    lines.push(`  [${message.role}/${message.trust ?? 'USER'}] ${message.content}`);
+    lines.push(`  ──[${message.role}/${message.trust ?? 'USER'}]──`);
+    for (const line of message.content.split('\n')) lines.push(`  ${line}`);
   }
   return lines.join('\n') + '\n';
 }
 
-describe('golden: assembled context', () => {
-  it('matches the committed golden file', () => {
-    const actual = render();
-    if (process.env.UPDATE_GOLDEN === '1' || !existsSync(GOLDEN)) {
-      writeFileSync(GOLDEN, actual);
-    }
-    expect(actual).toBe(readFileSync(GOLDEN, 'utf8'));
+describe('golden: assembled context (§21)', () => {
+  for (const [name, build] of Object.entries(SCENARIOS)) {
+    it(`matches the golden file: ${name}`, () => {
+      const actual = render(name, build());
+      const path = `${DIR}${name}.golden.txt`;
+      if (process.env.UPDATE_GOLDEN === '1' || !existsSync(path)) {
+        mkdirSync(dirname(path), { recursive: true });
+        writeFileSync(path, actual);
+      }
+      expect(actual).toBe(readFileSync(path, 'utf8'));
+    });
+  }
+
+  it('covers the scenarios §21 names', () => {
+    expect(Object.keys(SCENARIOS)).toHaveLength(12);
   });
 
   it('is byte-stable across repeated assembly', () => {
-    expect(render()).toBe(render());
+    for (const [name, build] of Object.entries(SCENARIOS)) {
+      expect(render(name, build())).toBe(render(name, build()));
+    }
   });
 });

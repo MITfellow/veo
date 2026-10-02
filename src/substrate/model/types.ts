@@ -70,6 +70,12 @@ export const MODEL_ERROR_KINDS = [
   'timeout',
   'overloaded',
   'bad-request',
+  /**
+   * The request did not fit the model's window. Distinct from 'bad-request'
+   * because the response is different in kind: compact and retry once (§23),
+   * never retry blind.
+   */
+  'context-overflow',
   'server',
   'network',
   'unknown',

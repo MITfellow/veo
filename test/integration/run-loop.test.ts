@@ -71,6 +71,8 @@ describe('the run loop', () => {
     expect(typesOf(outcome.runId)).toEqual([
       'run.started',
       'step.started',
+      // M5: every turn logs the context it was given (§21).
+      'context.assembled',
       'model.requested',
       'model.responded',
       'step.finished',

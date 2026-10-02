@@ -27,9 +27,9 @@
  * That is the M2 bar, and it is why there is no `runs` table of record — only
  * a projection (decision 008).
  */
-import type { Event } from '../substrate/events/envelope.js';
+
 import type { EventLog } from '../substrate/events/log.js';
-import { STOP_REASONS, minTrust } from '../substrate/events/types.js';
+import { STOP_REASONS } from '../substrate/events/types.js';
 import type { TrustLevel } from '../substrate/events/types.js';
 import type { Clock, Ids, Logger } from '../substrate/ports.js';
 import { canonicalJson } from '../substrate/hash.js';
@@ -42,11 +42,12 @@ import {
   type StreamTotals,
   type ToolCall,
 } from '../substrate/model/types.js';
-import {
-  assembleContext,
-  type AssembledContext,
-  type Turn,
-} from '../cognition/context/assemble.js';
+import { assembleContext, type AssembledContext } from '../cognition/context/assemble.js';
+import { policyFor, type ContextPolicy } from '../cognition/context/policy.js';
+import type { ForeignItem, StateSnapshot } from '../cognition/context/types.js';
+import { Snapshotter, type Gathered } from './snapshot.js';
+import { Compactor } from '../cognition/compaction.js';
+import { TokenCache } from '../cognition/tokens.js';
 import type { Invoker, Observation } from '../capability/invoke.js';
 import type { ApprovalStore, SuspensionStore } from '../capability/approvals.js';
 import { DEFAULT_DAILY_BUDGET, ZERO_SPEND, type Budget, type DailyLedger } from '../capability/budgets.js';
@@ -119,6 +120,9 @@ interface CapState {
   startedAt: number;
 }
 
+/** How much of the budget a post-compaction retry is allowed (§23). */
+const OVERFLOW_RETRY_SCALE = 0.6;
+
 const DEFAULT_SYSTEM =
   'You are a personal agent. You are careful, concrete and honest. ' +
   'When you do not know something, say so plainly rather than guessing.';
@@ -149,6 +153,13 @@ export interface RunnerDeps {
   fence?: boolean;
   /** Degradation level to report in the Situation block (§27). */
   degradation?: () => string;
+  /**
+   * Context assembly (M5). Defaults are built from the other deps, so a
+   * caller that does not care about context gets a working one.
+   */
+  snapshotter?: Snapshotter;
+  compactor?: Compactor;
+  contextPolicy?: ContextPolicy;
 }
 
 /**
@@ -169,8 +180,25 @@ export interface ResumeState {
 
 export class Runner {
   private readonly controllers = new Map<string, AbortController>();
+  private readonly compactor: Compactor;
+  private readonly snapshotter: Snapshotter;
+  private readonly contextPolicy: ContextPolicy;
+  /**
+   * Token counts memoized by content. Lives on the runner rather than inside
+   * the assembler because the assembler is pure and must stay that way: the
+   * cache is an argument it threads through, and output is byte-identical
+   * with it, without it, cold or warm (§33's 100ms bar, tested).
+   */
+  private readonly tokens = new TokenCache();
 
-  constructor(private readonly deps: RunnerDeps) {}
+  constructor(private readonly deps: RunnerDeps) {
+    this.compactor =
+      deps.compactor ?? new Compactor({ events: deps.events, clock: deps.clock, ids: deps.ids });
+    this.snapshotter =
+      deps.snapshotter ??
+      new Snapshotter({ events: deps.events, clock: deps.clock, compactor: this.compactor });
+    this.contextPolicy = deps.contextPolicy ?? policyFor(deps.model.id);
+  }
 
   /** Cancel a running run. Safe to call for an unknown or finished run. */
   cancel(runId: string, by = 'user'): boolean {
@@ -288,6 +316,9 @@ export class Runner {
     let partial: StreamTotals | null = null;
     /** Tool results from the previous step, fed back as the next input. */
     const observations: Observation[] = [];
+    /** §23 allows one compaction retry per run, and exactly one. */
+    let overflowRetried = false;
+    let contextScale = 1;
 
     // The approved call runs FIRST, at the step that asked for it, so its
     // idempotency key is unchanged and an effect already committed is
@@ -340,12 +371,8 @@ export class Runner {
         // Computed, never assumed. This is the value the whole capability
         // gate hangs off, so it is derived from the log every step rather
         // than carried forward in a variable someone can forget to lower.
-        const effectiveTrust = this.trustForStep(
-          runId,
-          request.sessionId,
-          observations,
-          request.trigger === 'user' ? 'USER' : 'SYSTEM',
-        );
+        const gathered = this.gather(request, runId, observations);
+        const effectiveTrust = gathered.effectiveTrust;
         events.append({
           type: 'step.started',
           payload: { index: stepIndex, effectiveTrust },
@@ -361,18 +388,50 @@ export class Runner {
         });
 
         /* ── assemble (pure) ───────────────────────────────────────────── */
-        const context = this.assemble(request, limits, clock, observations);
-        observations.length = 0;
+        const context = this.assembleFrom(
+          request,
+          gathered.snapshot,
+          effectiveTrust,
+          observations,
+          limits,
+          contextScale,
+        );
+        // Observations are NOT cleared here: an overflow retry re-assembles
+        // this same step, and clearing early would drop the tool results the
+        // step exists to react to. They are cleared once the model replies.
+
+        // §21: logged every single turn. Months later this is how "why did
+        // it say that?" gets answered — the digest identifies the exact
+        // context, the blocks say what was in it, the drops say what was not.
+        events.append({
+          type: 'context.assembled',
+          payload: {
+            digest: context.digest,
+            totalTokens: context.totalTokens,
+            blocks: context.blocks,
+            drops: context.evictions.map((eviction) => ({
+              block: eviction.block,
+              dropped: 1,
+              reason: `${eviction.reason}:${eviction.id}`,
+            })),
+            policyVersion: context.policyVersion,
+          },
+          principal: 'system',
+          trust: 'SYSTEM',
+          sessionId: request.sessionId,
+          runId,
+          stepId,
+          correlationId: runId,
+        });
+
         const modelRequest: ModelRequest = {
           model: model.id,
           messages: context.messages,
+          ...(context.tools.length > 0 ? { tools: context.tools } : {}),
           maxOutputTokens: Math.min(limits.maxTokens - caps.tokens, 4096),
         };
 
-        const contextDigest = canonicalJson({
-          blocks: context.blocks,
-          totalTokens: context.totalTokens,
-        });
+        const contextDigest = context.digest;
         events.append({
           type: 'model.requested',
           payload: {
@@ -410,6 +469,41 @@ export class Runner {
         outputTokens += totals.outputTokens;
 
         if (totals.error !== null) {
+          /* ── overflow → compact → exactly one retry (§23) ───────────── */
+          //
+          // Exactly one, and at a smaller budget. An overflow that survives
+          // a compaction pass is a bug in the budget, and retrying a bug in
+          // a loop is how a provider bill reaches four hundred dollars
+          // overnight. The second one fails as data.
+          if (totals.error.kind === 'context-overflow' && !overflowRetried) {
+            overflowRetried = true;
+            contextScale = OVERFLOW_RETRY_SCALE;
+            const compacted = this.compactor.compact(request.sessionId, true);
+            this.snapshotter.invalidate(request.sessionId);
+            logger.warn('context overflow: compacted and retrying once', {
+              runId,
+              compacted: compacted !== null,
+              scale: contextScale,
+            });
+            events.append({
+              type: 'model.failed',
+              payload: {
+                provider: model.id,
+                kind: 'context_overflow',
+                message: totals.error.message,
+              },
+              principal: 'system',
+              trust: 'SYSTEM',
+              sessionId: request.sessionId,
+              runId,
+              stepId,
+              correlationId: runId,
+            });
+            this.appendStepFinished(request, runId, stepId, stepIndex, 'error', latencyMs);
+            caps.steps++;
+            continue;
+          }
+
           // Failure is data: the partial text is kept, because the user
           // watched it appear and must not see it silently vanish.
           finalText += totals.text;
@@ -472,6 +566,7 @@ export class Runner {
         });
 
         finalText += totals.text;
+        observations.length = 0;
 
         /* ── tool calls ────────────────────────────────────────────────── */
         if (totals.toolCalls.length > 0) {
@@ -720,101 +815,72 @@ export class Runner {
     return null;
   }
 
-  /**
-   * The trust a step runs at: the minimum over its causal closure (§12.1).
-   *
-   * The closure of a model step is everything that influenced it — which is
-   * the entire run so far, plus the session history being replayed into the
-   * context, plus the tool results about to be fed in. Not just the current
-   * step.
-   *
-   * An earlier version of this scanned only events carrying the current
-   * stepId. That is a closure of one step, and it meant a FOREIGN tool
-   * result from step 2 left step 3 running at USER trust — so a web page
-   * could ask for a payment and get one. The injection corpus caught it.
-   *
-   * Cost is O(events in run + messages in session) per step. §32 flags this
-   * for M5's incremental assembler; correctness first.
-   */
-  private trustForStep(
-    runId: string,
-    sessionId: string,
-    observations: readonly Observation[],
-    fallback: TrustLevel,
-  ): TrustLevel {
-    let lowest = fallback;
+  private gather(request: RunRequest, runId: string, observations: readonly Observation[]): Gathered {
+    const foreign: ForeignItem[] = observations
+      .filter((observation) => observation.trust === 'FOREIGN')
+      .map((observation) => ({
+        id: observation.callId,
+        source: observation.tool,
+        text: observation.text,
+        trust: observation.trust,
+      }));
 
-    // Everything this run has already done.
-    for (const event of this.deps.events.read({ runId })) {
-      lowest = minTrust(lowest, event.trust);
-    }
-    // Everything being replayed into the context from earlier in the session:
-    // a FOREIGN page read an hour ago is still FOREIGN when it is quoted back.
-    for (const event of this.deps.events.read({
-      sessionId,
-      types: ['message.user', 'message.agent', 'message.system'],
-    })) {
-      lowest = minTrust(lowest, event.trust);
-    }
-    // And the results about to become this step's input.
-    for (const observation of observations) {
-      lowest = minTrust(lowest, observation.trust);
-    }
-
-    return lowest;
+    return this.snapshotter.gather({
+      principal: request.principal,
+      sessionId: request.sessionId,
+      runId,
+      trigger: request.trigger,
+      degradation: (this.deps.degradation?.() ?? 'L0') as 'L0' | 'L1' | 'L2' | 'L3',
+      observations: foreign,
+      fallbackTrust: request.trigger === 'user' ? 'USER' : 'SYSTEM',
+    });
   }
 
-  private assemble(
+  private assembleFrom(
     request: RunRequest,
+    snapshot: StateSnapshot,
+    trust: TrustLevel,
+    observations: readonly Observation[],
     limits: RunLimits,
-    clock: Clock,
-    observations: Observation[] = [],
+    scale: number,
   ): AssembledContext {
-    const history = this.historyFor(request.sessionId);
-    // Tool results enter the context as turns carrying the RESULT's trust,
-    // so FOREIGN output arrives fenced (M2) and trust-limited (M1).
+    // Tool results that are *not* FOREIGN belong in the conversation, not in
+    // the untrusted-material block: a note the agent wrote to itself is not
+    // hearsay, and fencing it would teach the model to distrust its own work.
+    const conversation = [...snapshot.conversation];
     for (const observation of observations) {
-      history.push({
+      if (observation.trust === 'FOREIGN') continue;
+      conversation.push({
         role: 'user',
         content: `[result of ${observation.tool}]\n${observation.text}`,
         trust: observation.trust,
         id: observation.callId,
       });
     }
-    const level = this.deps.degradation?.() ?? 'L0';
-    const situation = [
-      `Current time: ${new Date(clock.now()).toISOString()}`,
-      `Degradation level: ${level}`,
-    ];
-    return assembleContext({
-      fence: this.deps.fence ?? true,
-      system: request.system ?? DEFAULT_SYSTEM,
-      situation,
-      history,
-      maxTokens: limits.maxContextTokens,
-      // Characters/4 — stable, not exact. Decision 014.
-      countTokens: (text: string) => Math.ceil(text.length / 4),
-    });
-  }
 
-  /**
-   * History is read **from the event log**, not from a conversation object
-   * held in memory. That is what makes a second turn see the first one after
-   * a restart, and it is the same read the rebuild performs.
-   */
-  private historyFor(sessionId: string): Turn[] {
-    const events = this.deps.events.read({
-      sessionId,
-      types: ['message.user', 'message.agent'],
-    });
-    return events.map((event: Event): Turn => {
-      const payload = event.payload as { text: string };
-      return {
-        role: event.type === 'message.user' ? 'user' : 'assistant',
-        content: payload.text,
-        trust: event.trust,
-        id: event.id,
-      };
+    const window = Math.max(512, Math.floor(limits.maxContextTokens * scale));
+    const policy = {
+      ...this.contextPolicy,
+      window,
+      reserveForOutput: 0,
+      fence: this.deps.fence ?? true,
+      ...(scale < 1 ? { version: `${this.contextPolicy.version}-reduced` } : {}),
+    };
+
+    const system = request.system ?? DEFAULT_SYSTEM;
+    return assembleContext({
+      principal: request.principal,
+      sessionId: request.sessionId,
+      trust,
+      now: this.deps.clock.now(),
+      policy,
+      countTokens: (text: string) => this.tokens.count(text),
+      snapshot: {
+        ...snapshot,
+        // A caller-supplied system prompt is kernel text for this run.
+        kernel: snapshot.kernel === '' ? system : snapshot.kernel,
+        conversation,
+      },
     });
   }
 
@@ -953,6 +1019,8 @@ function mapErrorKind(
       return 'quota';
     case 'bad-request':
       return 'invalid_request';
+    case 'context-overflow':
+      return 'context_overflow';
     case 'timeout':
     case 'overloaded':
     case 'server':

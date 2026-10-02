@@ -234,8 +234,20 @@ describe('the trace renders from the log (§30)', () => {
     const responded = events.find((e) => e.type === 'model.responded');
 
     const digest = (requested?.payload as { contextDigest: string }).contextDigest;
-    expect(digest).toContain('system');
-    expect(digest).toContain('history');
+    // M5: the block breakdown moved to its own `context.assembled` event
+    // (§21: "logged every single turn"), and `model.requested` now carries
+    // the same short digest so the two can be tied together.
+    const assembled = events.find((e) => e.type === 'context.assembled');
+    const payload = assembled?.payload as {
+      digest: string;
+      blocks: Array<{ name: string; tokens: number }>;
+      policyVersion: string;
+    };
+    expect(payload.digest).toBe(digest);
+    expect(payload.policyVersion).toMatch(/^ctx-1/);
+    expect(payload.blocks.map((block) => block.name)).toContain('kernel');
+    expect(payload.blocks.map((block) => block.name)).toContain('conversation');
+    expect(payload.blocks.every((block) => block.tokens > 0)).toBe(true);
     expect((requested?.payload as { inputTokens: number }).inputTokens).toBeGreaterThan(0);
     expect((responded?.payload as { latencyMs: number }).latencyMs).toBeGreaterThanOrEqual(0);
 
@@ -243,6 +255,7 @@ describe('the trace renders from the log (§30)', () => {
     // the context is a pure function of events already in the log, so
     // storing it again would double the log for no new information.
     expect(digest).not.toContain('You are a personal agent');
+    expect(JSON.stringify(payload)).not.toContain('You are a personal agent');
     substrate.close();
   });
 });

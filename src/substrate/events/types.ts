@@ -265,6 +265,36 @@ const MemoryForgotten = z.object({
 const MemoryCorrected = z.object({ factId: z.string(), was: Json, now: Json, by: z.string() });
 const MemoryDisputed = z.object({ factId: z.string(), against: z.string(), reason: z.string() });
 
+/**
+ * §23 compaction. A deliberate addition to §9's event list, with the reason
+ * written down (decision 024): a summary that lives anywhere but the log
+ * would have to be recomputed on every restart — which costs money, is
+ * nondeterministic, and would make the context a function of when you asked
+ * rather than of what happened.
+ */
+const HistoryCompacted = z.object({
+  chunkId: z.string(),
+  fromEventId: z.string(),
+  toEventId: z.string(),
+  turnCount: z.number().int().positive(),
+  tokensBefore: z.number().int().nonnegative(),
+  tokensAfter: z.number().int().nonnegative(),
+  summarizer: z.string(),
+  summary: z.object({
+    decisions: z.array(z.string()),
+    openThreads: z.array(z.string()),
+    entities: z.array(z.string()),
+    unresolvedQuestions: z.array(z.string()),
+    span: z.object({
+      fromEventId: z.string(),
+      toEventId: z.string(),
+      turnCount: z.number().int().positive(),
+      fromTime: z.number().int().nonnegative(),
+      toTime: z.number().int().nonnegative(),
+    }),
+  }),
+});
+
 const ContextAssembled = z.object({
   digest: z.string(),
   totalTokens: z.number().int().nonnegative(),
@@ -371,6 +401,7 @@ export const EVENT_SCHEMAS = {
   'entity.merged': EntityMerged,
 
   'context.assembled': ContextAssembled,
+  'history.compacted': HistoryCompacted,
   'artifact.created': ArtifactCreated,
 
   'schedule.fired': ScheduleFired,
