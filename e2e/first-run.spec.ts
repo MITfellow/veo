@@ -15,8 +15,24 @@ test('a fresh install has no conversations and no messages', async ({ page }) =>
   await expect(page.locator('.conv-row')).toContainText('Agent');
   await expect(page.locator('.bubble')).toHaveCount(0);
   await expect(page.getByText('No Conversations')).toBeVisible();
+  // Read the persisted envelope, not React state — but wait for the
+  // write rather than assuming the 300ms above covered it. The save is
+  // debounced, so on a loaded machine the assertion could run against
+  // an envelope that had not been flushed yet and see an empty store.
+  // Polling keeps the claim identical and stops it depending on timing.
+  await expect
+    .poll(
+      async () => {
+        const stored = await page.evaluate(
+          async () => (await window.__store.read())?.state ?? null,
+        );
+        return (stored?.chats ?? []).map((c: { id: string }) => c.id);
+      },
+      { timeout: 10_000 },
+    )
+    .toEqual(['c-agent']);
+
   const stored = await page.evaluate(async () => (await window.__store.read())?.state ?? null);
-  expect((stored?.chats ?? []).map((c: { id: string }) => c.id)).toEqual(['c-agent']);
   expect(stored?.messages ?? []).toEqual([]);
 });
 

@@ -219,6 +219,19 @@ export class EventLog {
   /* ──────────────────────────────── read ──────────────────────────────── */
 
   read(query: ReadQuery = {}): Event[] {
+    const { clause, params } = this.filter(query);
+
+    const sql =
+      `SELECT * FROM events` +
+      clause +
+      ` ORDER BY seq ${query.reverse === true ? 'DESC' : 'ASC'}` +
+      (query.limit !== undefined ? ` LIMIT ${Math.max(0, Math.floor(query.limit))}` : '');
+
+    return this.storage.all<EventRow>(sql, params).map((r) => rowToEvent(r));
+  }
+
+  /** The WHERE shared by `read` and `count`, built once so they cannot drift. */
+  private filter(query: ReadQuery): { clause: string; params: Array<string | number> } {
     const where: string[] = [];
     const params: Array<string | number> = [];
 
@@ -260,13 +273,7 @@ export class EventLog {
       params.push(...allowed);
     }
 
-    const sql =
-      `SELECT * FROM events` +
-      (where.length ? ` WHERE ${where.join(' AND ')}` : '') +
-      ` ORDER BY seq ${query.reverse === true ? 'DESC' : 'ASC'}` +
-      (query.limit !== undefined ? ` LIMIT ${Math.max(0, Math.floor(query.limit))}` : '');
-
-    return this.storage.all<EventRow>(sql, params).map((r) => rowToEvent(r));
+    return { clause: where.length ? ` WHERE ${where.join(' AND ')}` : '', params };
   }
 
   byId(id: string): Event | undefined {
@@ -292,8 +299,20 @@ export class EventLog {
     return row ?? { seq: 0, hash: GENESIS_HASH };
   }
 
-  count(): number {
-    return this.storage.get<{ n: number }>('SELECT COUNT(*) AS n FROM events')?.n ?? 0;
+  /**
+   * How many events match, ignoring `limit` and `reverse`. No argument
+   * means the whole log, which is what every existing caller wants.
+   *
+   * Paging needs a denominator, and the honest way to get one is to ask
+   * the database rather than to read every matching row and measure the
+   * array — which is what `GET /events` was doing, at 150k events, on
+   * every change of a filter.
+   */
+  count(query: ReadQuery = {}): number {
+    const { clause, params } = this.filter(query);
+    return (
+      this.storage.get<{ n: number }>(`SELECT COUNT(*) AS n FROM events${clause}`, params)?.n ?? 0
+    );
   }
 
   /**

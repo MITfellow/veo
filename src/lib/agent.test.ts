@@ -178,6 +178,23 @@ describe('the rest of the harness', () => {
     const spy = json({ events: [], total: 0 });
     await agent.events();
     expect(spy.mock.calls[0]![0]).toContain('limit=100');
+    // No cursor means "the newest page", which is not the same request
+    // as "everything after 0" and must not be sent as one.
+    expect(spy.mock.calls[0]![0]).not.toContain('sinceSeq');
+  });
+
+  it('events() sends a zero cursor, because 0 is a real starting point', async () => {
+    const spy = json({ events: [], total: 0, nextSeq: 0, hasMore: false });
+    await agent.events({ sinceSeq: 0 });
+    expect(spy.mock.calls[0]![0]).toContain('sinceSeq=0');
+  });
+
+  it('events() hands back the cursor the server returned', async () => {
+    json({ events: [], total: 9, nextSeq: 42, hasMore: true });
+    await expect(agent.events({ sinceSeq: 40 })).resolves.toMatchObject({
+      nextSeq: 42,
+      hasMore: true,
+    });
   });
 
   it('trace() unwraps the structured trace', async () => {

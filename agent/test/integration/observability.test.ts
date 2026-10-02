@@ -238,3 +238,94 @@ describe('the metrics', () => {
     }
   });
 });
+
+/**
+ * `GET /events` with a cursor.
+ *
+ * The route used to read every matching row and slice the array, which
+ * made it both slow and unfollowable: with no way to say "since", a
+ * client that wanted to watch the log had to re-fetch the whole window
+ * and diff it. The cursor is `sinceSeq`, exclusive, and the server hands
+ * the next one back so no client has to derive `max(seq)` of a possibly
+ * empty page.
+ */
+describe('reading the log', () => {
+  interface Page {
+    total: number;
+    events: Array<{ seq: number; type: string }>;
+    nextSeq: number;
+    hasMore: boolean;
+  }
+
+  it('without a cursor returns the newest page, in log order', async () => {
+    const { body } = await get<Page>('/events?limit=5');
+    expect(body.events).toHaveLength(5);
+    // Ascending, even though the newest page is read backwards.
+    const seqs = body.events.map((event) => event.seq);
+    expect([...seqs].sort((a, b) => a - b)).toEqual(seqs);
+    // And it really is the newest page, not the oldest.
+    expect(body.nextSeq).toBe(seqs.at(-1));
+    expect(body.total).toBeGreaterThan(5);
+    expect(body.hasMore).toBe(true);
+  });
+
+  it('a cursor returns only what came after it', async () => {
+    const { body: first } = await get<Page>('/events?limit=3&sinceSeq=0');
+    expect(first.events.map((event) => event.seq)).toEqual([1, 2, 3]);
+
+    const { body: second } = await get<Page>(`/events?limit=3&sinceSeq=${first.nextSeq}`);
+    expect(second.events.map((event) => event.seq)).toEqual([4, 5, 6]);
+  });
+
+  /**
+   * The property that makes a cursor worth having on an append-only
+   * log: paging through it start to finish yields every event exactly
+   * once, with no gap and no repeat, whatever the page size.
+   */
+  it('paging with the cursor covers the log exactly once', async () => {
+    const { body: head } = await get<Page>('/events?limit=1');
+    const seen: number[] = [];
+    let cursor = 0;
+    for (let guard = 0; guard < 200; guard += 1) {
+      const { body } = await get<Page>(`/events?limit=7&sinceSeq=${cursor}`);
+      seen.push(...body.events.map((event) => event.seq));
+      cursor = body.nextSeq;
+      if (!body.hasMore) break;
+    }
+    expect(seen).toEqual([...seen].sort((a, b) => a - b));
+    expect(new Set(seen).size, 'an event came back twice').toBe(seen.length);
+    expect(seen.length).toBe(head.total);
+  });
+
+  it('a cursor at the head returns nothing and does not move', async () => {
+    const { body: head } = await get<Page>('/events?limit=1');
+    const { body } = await get<Page>(`/events?sinceSeq=${head.nextSeq}`);
+    expect(body.events).toEqual([]);
+    expect(body.hasMore).toBe(false);
+    // Critically: it hands back the cursor it was given rather than 0,
+    // which is what would make a follower start over from the beginning.
+    expect(body.nextSeq).toBe(head.nextSeq);
+  });
+
+  it('the cursor and the filter compose, and total counts the filter', async () => {
+    const { body } = await get<Page>('/events?types=run.started&sinceSeq=0&limit=50');
+    expect(body.events.length).toBeGreaterThan(0);
+    for (const event of body.events) expect(event.type).toBe('run.started');
+    // `total` is the size of the filtered set, not of the whole log.
+    const { body: all } = await get<Page>('/events?limit=1');
+    expect(body.total).toBeLessThan(all.total);
+    expect(body.total).toBe(body.events.length);
+  });
+
+  it('refuses a cursor that is not a whole number rather than guessing', async () => {
+    for (const bad of ['-1', 'abc', '1.5']) {
+      const { status } = await get(`/events?sinceSeq=${bad}`);
+      expect(status, `sinceSeq=${bad}`).toBe(400);
+    }
+  });
+
+  it('caps the page size so one client cannot ask for the whole log', async () => {
+    const { body } = await get<Page>('/events?limit=99999&sinceSeq=0');
+    expect(body.events.length).toBeLessThanOrEqual(500);
+  });
+});

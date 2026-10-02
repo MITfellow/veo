@@ -1231,18 +1231,49 @@ export class Api {
         .split(',')
         .map((t) => t.trim())
         .filter((t) => t !== '');
-      const limit = Math.min(Number(url.searchParams.get('limit') ?? '100'), 500);
-      const all = this.deps.events.read({
+      const limit = Math.min(Math.max(Number(url.searchParams.get('limit') ?? '100'), 1), 500);
+
+      const filter = {
         ...(types.length > 0 ? { types: types as never } : {}),
         ...(url.searchParams.has('sessionId')
           ? { sessionId: url.searchParams.get('sessionId') as string }
           : {}),
         ...(url.searchParams.has('runId') ? { runId: url.searchParams.get('runId') as string } : {}),
-      });
-      const page = all.slice(-limit);
+      };
+
+      /**
+       * `sinceSeq` is the cursor, and it is exclusive: "everything after
+       * the last row I saw".
+       *
+       * Without it the only way to follow the log was to re-fetch the
+       * whole tail window and diff it client-side, which is why the UI
+       * had a refresh button instead of a live view — building a poll
+       * loop on a cursorless route papers over the gap rather than
+       * closing it. The log is append-only and `seq` is monotonic, so a
+       * cursor is the natural shape here: a page can never shift under
+       * a reader the way an offset into a mutable table can.
+       */
+      const sinceRaw = url.searchParams.get('sinceSeq');
+      const since = sinceRaw === null ? null : Number(sinceRaw);
+      if (since !== null && (!Number.isInteger(since) || since < 0)) {
+        return json(res, 400, { error: 'bad_request', detail: 'sinceSeq must be a whole number' });
+      }
+
+      // Paging happens in SQL now. It used to read every matching row
+      // and slice the array, which at 150k events cost ~1.6s per call.
+      const rows =
+        since === null
+          ? // No cursor: the newest page. Read it backwards so the
+            // database does the work, then put it back in log order.
+            this.deps.events.read({ ...filter, limit, reverse: true }).reverse()
+          : this.deps.events.read({ ...filter, fromSeq: since + 1, limit });
+
+      const total = this.deps.events.count(filter);
+      const last = rows.at(-1)?.seq;
+
       json(res, 200, {
-        total: all.length,
-        events: page.map((event) => ({
+        total,
+        events: rows.map((event) => ({
           seq: event.seq,
           id: event.id,
           ts: event.ts,
@@ -1252,6 +1283,14 @@ export class Api {
           runId: event.runId,
           payload: this.deps.redactor?.redact(event.payload) ?? event.payload,
         })),
+        /**
+         * Hand the cursor back rather than making the caller derive it:
+         * an empty page still has to advance nothing, and `max(seq)` of
+         * an empty array is the sort of thing every client gets wrong
+         * once.
+         */
+        nextSeq: last ?? since ?? 0,
+        hasMore: since === null ? total > rows.length : rows.length === limit,
       });
     });
 

@@ -258,6 +258,20 @@ export interface EventFilter {
   sessionId?: string;
   runId?: string;
   limit?: number;
+  /**
+   * The cursor, exclusive: "everything after the last row I saw".
+   * Omitted means the newest page, which is what a reader opening the
+   * log for the first time wants.
+   */
+  sinceSeq?: number;
+}
+
+export interface EventPage {
+  events: EventView[];
+  total: number;
+  /** Pass this back as `sinceSeq` to continue. Safe on an empty page. */
+  nextSeq: number;
+  hasMore: boolean;
 }
 
 /**
@@ -603,13 +617,14 @@ export const agent = {
    * this file. Everything the other panels show is a projection of these
    * rows; this is the row.
    */
-  async events(filter: EventFilter = {}): Promise<{ events: EventView[]; total: number }> {
+  async events(filter: EventFilter = {}): Promise<EventPage> {
     const params = new URLSearchParams();
     if (filter.types !== undefined && filter.types.length > 0)
       params.set('types', filter.types.join(','));
     if (filter.sessionId !== undefined && filter.sessionId !== '')
       params.set('sessionId', filter.sessionId);
     if (filter.runId !== undefined && filter.runId !== '') params.set('runId', filter.runId);
+    if (filter.sinceSeq !== undefined) params.set('sinceSeq', String(filter.sinceSeq));
     params.set('limit', String(filter.limit ?? 100));
     return call(`/events?${params.toString()}`);
   },

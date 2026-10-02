@@ -172,6 +172,53 @@ test('the log is readable and filters to the kind of thing being asked about', a
   await expect(page.locator('.evt-payload').first()).toBeVisible();
 });
 
+test('the log follows along as the agent does something', async ({ page, isMobile }) => {
+  await openSettings(page, isMobile);
+  await expect(page.locator('.evt-row').first()).toBeVisible({ timeout: 10_000 });
+
+  // Start following, then make something happen. The cursor is what
+  // makes this cheap: each tick asks only for what came after the last
+  // row, so watching an idle agent costs a query that matches nothing.
+  await page.getByTestId('follow-log').click();
+  await expect(page.locator('.evt-live')).toContainText('live');
+
+  const before = Number(
+    /of (\d+) event/.exec(await page.getByTestId('event-count').innerText())?.[1] ?? '0',
+  );
+
+  // A real turn through the real agent, posted from the page so it goes
+  // through the same proxy the UI uses.
+  await page.evaluate(async () => {
+    const session = await fetch('/agent/sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'tail' }),
+    });
+    const { id } = (await session.json()) as { id: string };
+    await fetch(`/agent/sessions/${id}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'what time is it?' }),
+    });
+  });
+
+  // No reload, no refresh click: the rows arrive on their own.
+  await expect(page.locator('.evt-live')).toContainText('new', { timeout: 20_000 });
+  await expect
+    .poll(
+      async () =>
+        Number(
+          /of (\d+) event/.exec(await page.getByTestId('event-count').innerText())?.[1] ?? '0',
+        ),
+      { timeout: 20_000 },
+    )
+    .toBeGreaterThan(before);
+
+  // And it stops when told to.
+  await page.getByTestId('follow-log').click();
+  await expect(page.locator('.evt-live')).toHaveCount(0);
+});
+
 /* ─────────────────── §30 the trace, §29 stopping a run ────────────────── */
 
 test('an answer can explain itself from the bubble that gave it', async ({ page }) => {

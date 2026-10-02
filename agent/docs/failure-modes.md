@@ -203,6 +203,11 @@ the thing that went wrong.
 
 ## What has no failure mode yet, and should be read as a risk
 
+- **`GET /events` has a cursor now, and the rest of the API does not.**
+  `sinceSeq` makes the log followable and cheap (3–6ms at 150k events,
+  down from ~1.6s). Every other list route still answers with a slice
+  and no way to say "since" — `/memory`, `/schedules`, `/jobs`. None of
+  them is large enough to hurt yet, and all of them will be.
 - **One worker.** The lease fencing is built for several; nothing starts
   a second. If the single worker wedges, background work stops and the
   only signal is a growing `pending` count on `GET /jobs`.

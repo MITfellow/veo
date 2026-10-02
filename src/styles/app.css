@@ -4642,3 +4642,8 @@
   font-weight: 400;
   color: var(--text-dim);
 }
+
+/* The log is following: a quiet marker, not a flashing one. */
+.evt-live {
+  color: var(--ok, #2d9d5f);
+}
