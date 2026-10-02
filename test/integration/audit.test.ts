@@ -3,6 +3,7 @@ import { createTestSecurity } from '../../src/security/index.js';
 import { createTestSubstrate } from '../../src/substrate/index.js';
 import type { Security } from '../../src/security/index.js';
 import type { Substrate } from '../../src/substrate/index.js';
+import type { FakeClock } from '../../src/substrate/clock.js';
 
 const PASS = 'a passphrase long enough';
 
@@ -55,7 +56,7 @@ describe('privileged-action audit', () => {
   });
 
   it('filters by secret, principal and time window', async () => {
-    const clock = substrate.clock;
+    const clock = substrate.clock as FakeClock;
     await security.vault.create('openai', 'sk-live-aaaaaaaaaaaaaaaaaaaa', { principal: 'user:ara' });
     await security.vault.useSecret('secret://openai/1', { principal: 'user:ara', tool: 'a' }, () => undefined);
 

@@ -1,6 +1,7 @@
 import type { Storage } from '../ports.js';
 import { SCHEMA_001 } from './schema/001-init.js';
 import { SCHEMA_002 } from './schema/002-security.js';
+import { SCHEMA_003 } from './schema/003-steps.js';
 
 /**
  * Schema migrations.
@@ -19,6 +20,7 @@ export interface Migration {
 export const MIGRATIONS: readonly Migration[] = Object.freeze([
   { version: 1, name: 'init', sql: SCHEMA_001 },
   { version: 2, name: 'security', sql: SCHEMA_002 },
+  { version: 3, name: 'steps', sql: SCHEMA_003 },
 ]);
 
 export interface MigrationRow {

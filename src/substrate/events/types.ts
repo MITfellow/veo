@@ -87,10 +87,28 @@ const RunStarted = z.object({
     .partial()
     .optional(),
 });
+/**
+ * Every run says *why* it stopped (invariant 15: no unexplained output).
+ * "The run ended" with no reason is the kind of gap that turns a five-minute
+ * diagnosis into an afternoon. Added at M2 with a default so payloads written
+ * before the field existed still parse — see decision 015.
+ */
+export const STOP_REASONS = [
+  'stop',
+  'step-cap',
+  'token-cap',
+  'time-cap',
+  'cost-cap',
+  'tools-unavailable',
+  'loop-detected',
+] as const;
+export const StopReasonSchema = z.enum(STOP_REASONS);
+
 const RunFinished = z.object({
   steps: z.number().int().nonnegative(),
   tokens: z.number().int().nonnegative().optional(),
   costCents: z.number().nonnegative().optional(),
+  reason: StopReasonSchema.default('stop'),
 });
 const RunFailed = z.object({ kind: z.string(), message: z.string(), stepId: z.string().nullable() });
 const RunCancelled = z.object({ by: z.string(), reason: z.string().optional() });

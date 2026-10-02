@@ -225,11 +225,68 @@ export const artifactsProjector: Projector = {
   },
 };
 
+
+
+/* ────────────────────────────────── steps ─────────────────────────────────── */
+
+/**
+ * One row per step (M2, §26).
+ *
+ * The row is inserted on `step.started` — *before* the model is called — and
+ * updated on `step.finished`. A row with `finished_at IS NULL` after the
+ * process comes back up is an interrupted step, and that is a fact derived
+ * from the log rather than a status someone had to remember to write.
+ */
+export const stepsProjector: Projector = {
+  name: 'steps',
+  version: 1,
+  handles: ['step.started', 'step.finished', 'model.responded'],
+  reset(storage) {
+    storage.exec('DELETE FROM steps');
+  },
+  apply(e, storage) {
+    const stepId = e.stepId;
+    if (stepId === null || e.runId === null || e.sessionId === null) return;
+
+    switch (e.type) {
+      case 'step.started': {
+        const p = e.payload as PayloadOf<'step.started'>;
+        storage.run(
+          `INSERT INTO steps (id, run_id, session_id, idx, started_at, finished_at, outcome, duration_ms, trust)
+           VALUES (?,?,?,?,?,NULL,NULL,NULL,?)
+           ON CONFLICT(id) DO NOTHING`,
+          [stepId, e.runId, e.sessionId, p.index, e.ts, p.effectiveTrust],
+        );
+        break;
+      }
+      case 'step.finished': {
+        const p = e.payload as PayloadOf<'step.finished'>;
+        storage.run(
+          `UPDATE steps SET finished_at = ?, outcome = ?, duration_ms = ? WHERE id = ?`,
+          [e.ts, p.outcome, p.durationMs, stepId],
+        );
+        break;
+      }
+      case 'model.responded': {
+        const p = e.payload as PayloadOf<'model.responded'>;
+        storage.run(`UPDATE steps SET model_tokens = model_tokens + ? WHERE id = ?`, [
+          p.outputTokens,
+          stepId,
+        ]);
+        break;
+      }
+      default:
+        break;
+    }
+  },
+};
+
 export const CORE_PROJECTORS: readonly Projector[] = Object.freeze([
   sessionsProjector,
   messagesProjector,
   runsProjector,
   entitiesProjector,
   artifactsProjector,
+  stepsProjector,
 ]);
 

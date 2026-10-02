@@ -1,0 +1,27 @@
+total_tokens: 114
+truncated: true
+
+blocks:
+  system: tokens=16 items=1
+  situation: tokens=53 items=3
+  history: tokens=45 items=5
+
+evictions:
+  turn-00 (budget, 8 tokens)
+  turn-01 (budget, 12 tokens)
+  turn-02 (budget, 7 tokens)
+  turn-03 (budget, 13 tokens)
+  turn-04 (budget, 8 tokens)
+  turn-05 (budget, 19 tokens)
+  turn-06 (budget, 10 tokens)
+
+messages:
+  [system/SYSTEM] You are a personal agent. You are careful, concrete and honest.
+  [system/SYSTEM] Current time: 2026-03-01T09:00:00.000Z
+Degradation level: L0
+Note: 7 earlier turn(s) in this conversation were dropped to fit the context budget. If the user refers to something you cannot see, say so and ask.
+  [assistant/DERIVED] Did she have a view on it?
+  [user/USER] She loved it. She stayed near the castle.
+  [assistant/DERIVED] Then you have a local guide. When do you fly?
+  [user/USER] The 14th of March.
+  [assistant/DERIVED] Noted. I will keep that date in mind.

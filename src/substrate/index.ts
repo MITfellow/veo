@@ -84,14 +84,26 @@ export function createSubstrate(options: SubstrateOptions = {}): Substrate {
 
 /** The in-memory substrate every test starts from: deterministic clock, seeded ids. */
 export function createTestSubstrate(
-  options: { clock?: FakeClock; seed?: number; projectors?: readonly Projector[] } = {},
+  options: {
+    clock?: FakeClock;
+    seed?: number;
+    projectors?: readonly Projector[];
+    /**
+     * On-disk path instead of `:memory:`.
+     *
+     * Needed by any test that simulates a process restart: with `:memory:`
+     * the "second process" silently gets an empty database and the test
+     * passes while proving nothing. One did exactly that until this existed.
+     */
+    dbPath?: string;
+  } = {},
 ): Substrate & { clock: FakeClock } {
   const clock = options.clock ?? new FakeClock();
   const substrate = createSubstrate({
     config: testConfig(),
     clock,
     ids: fakeIds(clock, options.seed ?? 1),
-    storage: new SqliteStorage({ path: ':memory:' }),
+    storage: new SqliteStorage({ path: options.dbPath ?? ':memory:' }),
     logger: new NullLogger(),
     ...(options.projectors ? { projectors: options.projectors } : {}),
   });

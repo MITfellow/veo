@@ -14,7 +14,8 @@
     "demo": "tsx scripts/demo-m0.ts",
     "verify-chain": "tsx scripts/verify-chain.ts",
     "demo:m1": "tsx scripts/demo-m1.ts",
-    "demo:m0": "tsx scripts/demo-m0.ts"
+    "demo:m0": "tsx scripts/demo-m0.ts",
+    "demo:m2": "tsx scripts/demo-m2.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",
