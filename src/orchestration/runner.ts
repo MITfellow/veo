@@ -29,7 +29,7 @@
  */
 import type { Event } from '../substrate/events/envelope.js';
 import type { EventLog } from '../substrate/events/log.js';
-import { STOP_REASONS } from '../substrate/events/types.js';
+import { STOP_REASONS, minTrust } from '../substrate/events/types.js';
 import type { TrustLevel } from '../substrate/events/types.js';
 import type { Clock, Ids, Logger } from '../substrate/ports.js';
 import { canonicalJson } from '../substrate/hash.js';
@@ -47,6 +47,7 @@ import {
   type AssembledContext,
   type Turn,
 } from '../cognition/context/assemble.js';
+import type { Invoker, Observation } from '../capability/invoke.js';
 
 export type StopReason = (typeof STOP_REASONS)[number];
 
@@ -120,6 +121,11 @@ export interface RunnerDeps {
   ids: Ids;
   logger: Logger;
   model: TypedModelProvider;
+  /**
+   * Tool execution (M3). Absent means no tools: the loop still records
+   * `tool.requested` and stops honestly rather than pretending.
+   */
+  invoker?: Invoker;
   /** Degradation level to report in the Situation block (§27). */
   degradation?: () => string;
 }
@@ -178,6 +184,8 @@ export class Runner {
     const recentCalls: string[] = [];
     /** The in-flight stream's totals, so a cancellation keeps its partial text. */
     let partial: StreamTotals | null = null;
+    /** Tool results from the previous step, fed back as the next input. */
+    const observations: Observation[] = [];
 
     try {
       for (;;) {
@@ -209,7 +217,8 @@ export class Runner {
         });
 
         /* ── assemble (pure) ───────────────────────────────────────────── */
-        const context = this.assemble(request, limits, clock);
+        const context = this.assemble(request, limits, clock, observations);
+        observations.length = 0;
         const modelRequest: ModelRequest = {
           model: model.id,
           messages: context.messages,
@@ -323,6 +332,7 @@ export class Runner {
         /* ── tool calls ────────────────────────────────────────────────── */
         if (totals.toolCalls.length > 0) {
           const loop = this.detectLoop(recentCalls, totals.toolCalls);
+
           for (const call of totals.toolCalls) {
             events.append({
               type: 'tool.requested',
@@ -339,42 +349,71 @@ export class Runner {
               correlationId: runId,
             });
           }
-          this.appendStepFinished(request, runId, stepId, stepIndex, 'tools', latencyMs);
-          caps.steps++;
 
           if (loop === 'abort') {
             logger.warn('aborting run: the model is repeating a tool call', { runId });
+            this.appendStepFinished(request, runId, stepId, stepIndex, 'tools', latencyMs);
+            caps.steps++;
             if (finalText.length > 0) {
               this.appendAgentMessage(request, runId, stepId, finalText, 'loop-detected');
             }
             return this.finish(
-              runId,
-              request,
-              'loop-detected',
-              caps,
-              finalText,
-              inputTokens,
-              outputTokens,
-              false,
+              runId, request, 'loop-detected', caps, finalText, inputTokens, outputTokens,
             );
           }
 
-          // M3 executes these. Until then the run stops here, honestly
-          // labelled, rather than looping forever waiting for results that
-          // will never come.
-          if (finalText.length > 0) {
-            this.appendAgentMessage(request, runId, stepId, finalText, 'tools-unavailable');
+          // Without an invoker there is nothing to execute, and saying so is
+          // better than looping forever waiting for results that will never
+          // come. With one, the calls run and the loop continues.
+          if (this.deps.invoker === undefined) {
+            this.appendStepFinished(request, runId, stepId, stepIndex, 'tools', latencyMs);
+            caps.steps++;
+            if (finalText.length > 0) {
+              this.appendAgentMessage(request, runId, stepId, finalText, 'tools-unavailable');
+            }
+            return this.finish(
+              runId, request, 'tools-unavailable', caps, finalText, inputTokens, outputTokens,
+            );
           }
-          return this.finish(
-            runId,
-            request,
-            'tools-unavailable',
-            caps,
-            finalText,
-            inputTokens,
-            outputTokens,
-            false,
-          );
+
+          for (const call of totals.toolCalls) {
+            // Effective trust is recomputed per call over the causal
+            // closure, so a FOREIGN result from the previous step drags this
+            // one down whatever the model claims.
+            const observation = await this.deps.invoker.invoke({
+              callId: call.id,
+              tool: call.name,
+              input: call.input,
+              runId,
+              stepId,
+              principal: request.principal,
+              effectiveTrust: this.trustForStep(stepId, effectiveTrust),
+              signal: controller.signal,
+            });
+            observations.push(observation);
+          }
+
+          if (loop === 'correct') {
+            // §26: a corrective observation before aborting. The model gets
+            // one chance to notice it is going in circles.
+            observations.push({
+              tool: 'system',
+              callId: 'loop-warning',
+              ok: false,
+              truncated: false,
+              artifacts: [],
+              trust: 'SYSTEM',
+              text:
+                'You have now made the same tool call three times with identical arguments. ' +
+                'Repeating it will not produce a different answer. Either use the results you ' +
+                'already have, try a materially different approach, or tell the user what is ' +
+                'blocking you.',
+            });
+          }
+
+          this.appendStepFinished(request, runId, stepId, stepIndex, 'tools', latencyMs);
+          caps.steps++;
+          continue;
         }
 
         /* ── plain text answer ─────────────────────────────────────────── */
@@ -475,8 +514,37 @@ export class Runner {
     return null;
   }
 
-  private assemble(request: RunRequest, limits: RunLimits, clock: Clock): AssembledContext {
+  /**
+   * The trust a step runs at.
+   *
+   * Recomputed from the causal closure rather than carried forward, because
+   * a tool result appended during *this* step can lower it — which is
+   * exactly what must happen when a tool returns FOREIGN content.
+   */
+  private trustForStep(stepId: string, fallback: TrustLevel): TrustLevel {
+    const stepEvents = this.deps.events.read({}).filter((e) => e.stepId === stepId);
+    let lowest = fallback;
+    for (const event of stepEvents) lowest = minTrust(lowest, event.trust);
+    return lowest;
+  }
+
+  private assemble(
+    request: RunRequest,
+    limits: RunLimits,
+    clock: Clock,
+    observations: Observation[] = [],
+  ): AssembledContext {
     const history = this.historyFor(request.sessionId);
+    // Tool results enter the context as turns carrying the RESULT's trust,
+    // so FOREIGN output arrives fenced (M2) and trust-limited (M1).
+    for (const observation of observations) {
+      history.push({
+        role: 'user',
+        content: `[result of ${observation.tool}]\n${observation.text}`,
+        trust: observation.trust,
+        id: observation.callId,
+      });
+    }
     const level = this.deps.degradation?.() ?? 'L0';
     const situation = [
       `Current time: ${new Date(clock.now()).toISOString()}`,

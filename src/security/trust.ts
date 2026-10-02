@@ -15,6 +15,14 @@ import { type TrustLevel, minTrust, trustRank } from '../substrate/events/types.
 
 export type Capability =
   | 'vault:read'
+  /**
+   * Listing credential *names* is strictly weaker than reading their values,
+   * so it is its own capability. Folding it into `vault:read` would mean a
+   * tool that only wants to know whether a key exists has to be granted the
+   * power to read every secret — the classic over-broad scope that makes
+   * capability systems decorative. Added at M3 for secret-name listing.
+   */
+  | 'vault:list'
   | 'spend'
   | 'send'
   | 'net:read'
@@ -39,6 +47,7 @@ export type Capability =
 const CAPABILITY_CEILING: Record<TrustLevel, ReadonlySet<Capability>> = {
   SYSTEM: new Set<Capability>([
     'vault:read',
+    'vault:list',
     'spend',
     'send',
     'net:read',
@@ -54,6 +63,7 @@ const CAPABILITY_CEILING: Record<TrustLevel, ReadonlySet<Capability>> = {
   ]),
   USER: new Set<Capability>([
     'vault:read',
+    'vault:list',
     'spend',
     'send',
     'net:read',
@@ -71,6 +81,7 @@ const CAPABILITY_CEILING: Record<TrustLevel, ReadonlySet<Capability>> = {
   // reach credentials on its own — a hallucinated vault read is still a
   // vault read.
   DERIVED: new Set<Capability>([
+    'vault:list',
     'net:read',
     'fs:read',
     'fs:write:sandbox',
