@@ -12,6 +12,7 @@ import {
   makeTasksComplete,
   makeTasksDrop,
   makeTasksList,
+  makeTasksReopen,
 } from '../../src/tools/tasks.js';
 import type { ToolContext } from '../../src/capability/tool.js';
 
@@ -243,5 +244,118 @@ describe('the task tools', () => {
     expect(result.error.kind).toBe('invalid_input');
     expect(s.events.read({ types: ['task.added'], limit: 10 })).toHaveLength(0);
     s.close();
+  });
+});
+
+/**
+ * S3 tests 13–20: reopening.
+ *
+ * S2 shipped a tick-box that could not be unticked — `PATCH
+ * {done:false}` returned 409 — because the log had no event for it.
+ * The fix is an event, not a mutation: the completion stays in the
+ * history and a later fact overrides it.
+ */
+describe('a finished task can be put back on the list', () => {
+  it('13. reopen appends task.reopened and clears the stamp', () => {
+    const s = fixture();
+    const task = s.store.add(USER, { title: 'Draft the letter' });
+    s.store.complete(USER, task.id);
+
+    const before = s.events.count();
+    expect(s.store.reopen(USER, task.id)).toBe(true);
+    expect(s.events.count()).toBe(before + 1);
+
+    const reopened = s.store.get(USER, task.id);
+    expect(reopened?.completedAt).toBeNull();
+    expect(s.store.list(USER).map((t) => t.id)).toContain(task.id);
+  });
+
+  it('14. the completion is still in the log afterwards', () => {
+    // The point of an append-only log: "finished on Tuesday, reopened
+    // on Thursday" is a true history and must survive.
+    const s = fixture();
+    const task = s.store.add(USER, { title: 'Book the flights' });
+    s.store.complete(USER, task.id);
+    s.store.reopen(USER, task.id);
+
+    const types = s.events.read({}).map((e) => e.type);
+    expect(types).toContain('task.completed');
+    expect(types).toContain('task.reopened');
+  });
+
+  it('15. an open task cannot be reopened, and nothing is appended', () => {
+    const s = fixture();
+    const task = s.store.add(USER, { title: 'Water the plants' });
+
+    const before = s.events.count();
+    expect(s.store.reopen(USER, task.id)).toBe(false);
+    expect(s.events.count()).toBe(before);
+  });
+
+  it('16. a dropped task cannot be reopened', () => {
+    // Dropping says "this stopped being worth doing". Undoing that is
+    // deciding to do it again, which is a new task with today's date.
+    const s = fixture();
+    const task = s.store.add(USER, { title: 'Repaint the shed' });
+    s.store.drop(USER, task.id);
+
+    expect(s.store.reopen(USER, task.id)).toBe(false);
+    expect(s.store.get(USER, task.id)?.droppedAt).not.toBeNull();
+  });
+
+  it("17. reopen cannot reach another principal's task", () => {
+    const s = fixture();
+    const task = s.store.add(USER, { title: 'Private errand' });
+    s.store.complete(USER, task.id);
+
+    expect(s.store.reopen('someone-else', task.id)).toBe(false);
+    expect(s.store.get(USER, task.id)?.completedAt).not.toBeNull();
+  });
+
+  it('18. a rebuild replays the reopen, not just the completion', () => {
+    const s = fixture();
+    const task = s.store.add(USER, { title: 'Call the plumber' });
+    s.store.complete(USER, task.id);
+    s.store.reopen(USER, task.id);
+
+    s.storage.exec('DELETE FROM tasks');
+    s.events.rebuild();
+
+    const after = s.store.get(USER, task.id);
+    expect(after?.completedAt).toBeNull();
+    expect(after?.title).toBe('Call the plumber');
+  });
+
+  it('19. the tool reports the three failures distinctly', async () => {
+    const s = fixture();
+    const reopen = makeTasksReopen({ store: s.store });
+
+    const missing = await reopen.execute({ id: 'T-nope' }, ctx());
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.error.kind).toBe('not_found');
+
+    const open = s.store.add(USER, { title: 'Still going' });
+    const already = await reopen.execute({ id: open.id }, ctx());
+    expect(already.ok).toBe(false);
+    if (!already.ok) {
+      expect(already.error.kind).toBe('conflict');
+      expect(already.error.message).toContain('already on the list');
+    }
+
+    const gone = s.store.add(USER, { title: 'Abandoned' });
+    s.store.drop(USER, gone.id);
+    const droppedResult = await reopen.execute({ id: gone.id }, ctx());
+    expect(droppedResult.ok).toBe(false);
+    if (!droppedResult.ok) expect(droppedResult.error.message).toContain('dropped');
+  });
+
+  it('20. the agent may reopen but still may not drop', () => {
+    // Decision 035's line: restoring something is reversible and
+    // visible, so DERIVED is enough. Destroying what a person wrote
+    // down stays with the person.
+    const s = fixture();
+    expect(makeTasksReopen({ store: s.store }).minTrust).toBe('DERIVED');
+    expect(makeTasksComplete({ store: s.store }).minTrust).toBe('DERIVED');
+    expect(makeTasksDrop({ store: s.store }).minTrust).toBe('USER');
   });
 });

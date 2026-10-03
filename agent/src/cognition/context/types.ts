@@ -232,6 +232,14 @@ export interface ToolSummary {
   /** JSON Schema, produced from zod (decision 020). */
   parameters: unknown;
   minTrust: TrustLevel;
+  /**
+   * Carried through to the provider so a chooser can tell reading from
+   * destroying. `minTrust` answers "may this caller use it at all";
+   * these answer "what happens if the choice is wrong", which is a
+   * different question and the one a guess depends on.
+   */
+  risk: 'safe' | 'caution' | 'dangerous';
+  effect: 'pure' | 'local' | 'external';
 }
 
 export interface ProfileStats {

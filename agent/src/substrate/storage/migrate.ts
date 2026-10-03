@@ -15,6 +15,7 @@ import { SCHEMA_013 } from './schema/013-fact-subject-index.js';
 import { SCHEMA_014 } from './schema/014-calendar.js';
 import { SCHEMA_015 } from './schema/015-messages-fts.js';
 import { SCHEMA_016 } from './schema/016-tasks.js';
+import { SCHEMA_017 } from './schema/017-reminders.js';
 
 /**
  * Schema migrations.
@@ -47,6 +48,7 @@ export const MIGRATIONS: readonly Migration[] = Object.freeze([
   { version: 14, name: 'calendar', sql: SCHEMA_014 },
   { version: 15, name: 'messages-fts', sql: SCHEMA_015 },
   { version: 16, name: 'tasks', sql: SCHEMA_016 },
+  { version: 17, name: 'reminders', sql: SCHEMA_017 },
 ]);
 
 export interface MigrationRow {

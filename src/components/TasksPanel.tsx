@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { agent, AgentUnavailableError, type TaskView } from '../lib/agent';
+import { agent, AgentUnavailableError, type ReminderView, type TaskView } from '../lib/agent';
 
 /**
  * The to-do list — the things with no time attached.
@@ -20,6 +20,13 @@ import { agent, AgentUnavailableError, type TaskView } from '../lib/agent';
  *   what I wrote down actually got done".
  * - **Overdue is stated plainly, not in red everywhere.** One marker on
  *   the row. A list that shouts at you is a list you close.
+ *
+ * S3 adds the fourth: **a due date still does not fire, but a reminder
+ * does.** The two are deliberately separate controls. "This is due
+ * Friday" and "tell me about this on Thursday evening" are different
+ * statements, and apps that conflate them are the reason people end up
+ * with deadlines they are notified about four times and deadlines they
+ * hear nothing about.
  */
 
 const dueLabel = (dueAt: number | null, now: number): string => {
@@ -39,6 +46,15 @@ const dueLabel = (dueAt: number | null, now: number): string => {
   if (days === 1) return 'Tomorrow';
   return new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' }).format(day);
 };
+
+/** A reminder's moment, written the way a person would say it. */
+const whenLabel = (at: number): string =>
+  new Intl.DateTimeFormat(undefined, {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(at));
 
 /** A `yyyy-mm-dd` value from a date input, as end of that day locally. */
 const endOfDay = (value: string): number => {
@@ -62,11 +78,22 @@ export default function TasksPanel({ onNotice }: { onNotice: (message: string) =
   const [showDone, setShowDone] = useState(false);
   const [title, setTitle] = useState('');
   const [due, setDue] = useState('');
+  /** Which row has its reminder control open, and what it says. */
+  const [remindFor, setRemindFor] = useState<string | null>(null);
+  const [remindAt, setRemindAt] = useState('');
+  const [reminders, setReminders] = useState<ReminderView[]>([]);
 
-  const load = useCallback(async (closed: boolean) => agent.tasks(closed), []);
+  const load = useCallback(async (closed: boolean) => {
+    // One await, both lists: a row that shows a bell and a panel that
+    // lists the reminders must not be able to disagree because they
+    // were fetched a second apart.
+    const [tasks, reminders] = await Promise.all([agent.tasks(closed), agent.reminders()]);
+    return { tasks: tasks.tasks, reminders: reminders.reminders };
+  }, []);
 
-  const apply = useCallback((result: { tasks: TaskView[] }) => {
+  const apply = useCallback((result: { tasks: TaskView[]; reminders: ReminderView[] }) => {
     setTasks(result.tasks);
+    setReminders(result.reminders);
     setNow(Date.now());
     setError(null);
     setLoaded(true);
@@ -116,6 +143,48 @@ export default function TasksPanel({ onNotice }: { onNotice: (message: string) =
     }
   };
 
+  /** The pending reminder on a task, if it has one. */
+  const reminderFor = (taskId: string): ReminderView | undefined =>
+    reminders.find(
+      (reminder) =>
+        reminder.ownerKind === 'task' &&
+        reminder.ownerId === taskId &&
+        reminder.state === 'pending',
+    );
+
+  const setReminder = async (task: TaskView) => {
+    if (remindAt === '') return;
+    const at = new Date(remindAt).getTime();
+    if (!Number.isFinite(at)) {
+      onNotice('That is not a time I can read.');
+      return;
+    }
+    try {
+      await agent.setReminder({
+        text: task.title,
+        remindAt: at,
+        ownerKind: 'task',
+        ownerId: task.id,
+      });
+      setRemindFor(null);
+      setRemindAt('');
+      await refresh();
+      onNotice('Reminder set.');
+    } catch (cause) {
+      onNotice((cause as Error).message);
+    }
+  };
+
+  const cancelReminder = async (reminder: ReminderView) => {
+    try {
+      await agent.cancelReminder(reminder.id);
+      await refresh();
+      onNotice('Reminder called off.');
+    } catch (cause) {
+      onNotice((cause as Error).message);
+    }
+  };
+
   if (error !== null) {
     return (
       <>
@@ -133,6 +202,7 @@ export default function TasksPanel({ onNotice }: { onNotice: (message: string) =
   // had not worked.
   const closed = tasks.filter((task) => task.done && task.droppedAt === null);
   const shown = showDone ? [...open, ...closed] : open;
+  const pending = reminders.filter((reminder) => reminder.state === 'pending');
 
   return (
     <>
@@ -179,11 +249,17 @@ export default function TasksPanel({ onNotice }: { onNotice: (message: string) =
             <div key={task.id} className={`tsk-row${task.done ? ' is-done' : ''}`}>
               <button
                 className="tsk-check"
-                aria-label={task.done ? `${task.title} is done` : `Mark ${task.title} done`}
-                disabled={task.done}
+                aria-label={
+                  task.done ? `Put ${task.title} back on the list` : `Mark ${task.title} done`
+                }
                 onClick={async () => {
-                  await agent.completeTask(task.id);
+                  // Unticking is a real operation now, not a disabled
+                  // control: a tick-box you cannot untick is a trap,
+                  // and the agent has a `task.reopened` event for it.
+                  if (task.done) await agent.reopenTask(task.id);
+                  else await agent.completeTask(task.id);
                   await refresh();
+                  if (task.done) onNotice('Back on the list.');
                 }}
               >
                 {task.done ? '✓' : ''}
@@ -204,6 +280,20 @@ export default function TasksPanel({ onNotice }: { onNotice: (message: string) =
                 </div>
               )}
               <button
+                className={`tsk-btn${reminderFor(task.id) === undefined ? '' : ' is-set'}`}
+                aria-label={
+                  reminderFor(task.id) === undefined
+                    ? `Set a reminder for ${task.title}`
+                    : `Reminder set for ${task.title}`
+                }
+                onClick={() => {
+                  setRemindFor(remindFor === task.id ? null : task.id);
+                  setRemindAt('');
+                }}
+              >
+                {reminderFor(task.id) === undefined ? 'Remind' : 'Reminded'}
+              </button>
+              <button
                 className="tsk-btn is-danger"
                 onClick={async () => {
                   await agent.dropTask(task.id);
@@ -213,6 +303,36 @@ export default function TasksPanel({ onNotice }: { onNotice: (message: string) =
               >
                 Remove
               </button>
+              {remindFor !== task.id ? null : (
+                <div className="tsk-remind">
+                  {reminderFor(task.id) === undefined ? (
+                    <>
+                      <input
+                        className="tsk-input"
+                        type="datetime-local"
+                        aria-label={`Remind me about ${task.title} at`}
+                        value={remindAt}
+                        onChange={(event) => setRemindAt(event.target.value)}
+                      />
+                      <button className="tsk-btn" onClick={() => void setReminder(task)}>
+                        Set
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="tsk-sub">
+                        {whenLabel(reminderFor(task.id)!.remindAt)}
+                      </span>
+                      <button
+                        className="tsk-btn is-danger"
+                        onClick={() => void cancelReminder(reminderFor(task.id)!)}
+                      >
+                        Call off
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           ))
         )}
@@ -221,6 +341,24 @@ export default function TasksPanel({ onNotice }: { onNotice: (message: string) =
       <button className="tsk-btn" onClick={() => setShowDone(!showDone)}>
         {showDone ? 'Hide finished' : 'Show finished'}
       </button>
+
+      {pending.length === 0 ? null : (
+        <div className="tsk-reminders">
+          <div className="panel-label">Reminders</div>
+          {pending.map((reminder) => (
+            <div key={reminder.id} className="tsk-reminder">
+              <span className="tsk-sub">{whenLabel(reminder.remindAt)}</span>
+              <span className="tsk-title">{reminder.text}</span>
+              <button className="tsk-btn is-danger" onClick={() => void cancelReminder(reminder)}>
+                Call off
+              </button>
+            </div>
+          ))}
+          <div className="tsk-sub">
+            These speak up on their own, in a session of their own. A due date does not.
+          </div>
+        </div>
+      )}
     </>
   );
 }

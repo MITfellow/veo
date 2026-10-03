@@ -54,10 +54,24 @@ export class ToolRegistry {
    * offering a model a tool it will be refused for is an invitation to waste
    * a step and then apologise.
    */
+  /**
+   * The tools, as the model is told about them.
+   *
+   * `risk` and `effect` are included, and they are not decoration. A
+   * model choosing between "look at the calendar" and "delete the
+   * appointment" needs to know which one it is about to do; without
+   * these two fields that information exists only in the policy engine,
+   * which sees the call after the decision has been made.
+   *
+   * The offline provider relies on them to refuse to guess arguments
+   * for anything that writes — see its `bestTool`.
+   */
   specsFor(permitted: (tool: Tool<any, any>) => boolean): Array<{
     name: string;
     description: string;
     parameters: JsonSchema;
+    risk: Tool<any, any>['risk'];
+    effect: Tool<any, any>['effect'];
   }> {
     return this.list()
       .filter(permitted)
@@ -65,6 +79,8 @@ export class ToolRegistry {
         name: tool.name,
         description: tool.description,
         parameters: jsonSchemaOf(tool.input as z.ZodTypeAny),
+        risk: tool.risk,
+        effect: tool.effect,
       }));
   }
 }

@@ -130,8 +130,22 @@ describe('trust cannot be laundered through the context', () => {
   it('does not offer a FOREIGN step the tools it may not call', () => {
     const snapshot = snap({
       tools: [
-        { name: 'payments.charge', description: 'Charges a card.', parameters: {}, minTrust: 'USER' },
-        { name: 'clock.now', description: 'Returns the current time.', parameters: {}, minTrust: 'FOREIGN' },
+        {
+          name: 'payments.charge',
+          description: 'Charges a card.',
+          parameters: {},
+          minTrust: 'USER',
+          risk: 'dangerous',
+          effect: 'external',
+        },
+        {
+          name: 'clock.now',
+          description: 'Returns the current time.',
+          parameters: {},
+          minTrust: 'FOREIGN',
+          risk: 'safe',
+          effect: 'pure',
+        },
       ],
     });
     const result = assembleContext({

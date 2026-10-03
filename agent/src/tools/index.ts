@@ -26,6 +26,7 @@ import { timeConvert, timeUntil } from './time.js';
 import { notesRead, notesWrite, notesList, notesSearch } from './notes.js';
 import { calendarTools, type CalendarToolDeps } from './calendar.js';
 import { taskTools, type TaskToolDeps } from './tasks.js';
+import { makeReminderTools, type ReminderToolDeps } from './reminders.js';
 import { unitConvert } from './unit-convert.js';
 import { makeConversationSearch, type SearchToolDeps } from './conversation-search.js';
 import { makeVaultList } from './vault-list.js';
@@ -38,6 +39,8 @@ export interface BuiltinDeps {
   calendar?: CalendarToolDeps;
   /** S2's task list and conversation search, on the same terms. */
   tasks?: TaskToolDeps;
+  /** S3's reminders, which need the task and calendar stores to check owners. */
+  reminders?: ReminderToolDeps;
   conversations?: SearchToolDeps;
 }
 
@@ -56,6 +59,9 @@ export function registerBuiltins(registry: ToolRegistry, deps: BuiltinDeps = {})
   }
   if (deps.tasks !== undefined) {
     for (const tool of taskTools(deps.tasks)) registry.register(tool);
+  }
+  if (deps.reminders !== undefined) {
+    for (const tool of makeReminderTools(deps.reminders)) registry.register(tool);
   }
   if (deps.conversations !== undefined) {
     registry.register(makeConversationSearch(deps.conversations));

@@ -105,6 +105,31 @@ export class TaskStore {
   }
 
   /**
+   * Put a finished task back on the list.
+   *
+   * Returns false when there is no such task, and — unlike `complete`
+   * — also when the task is open already or was dropped. Those are not
+   * the caller getting what they wanted by another route: reopening an
+   * open task is a no-op the caller should know about, and a dropped
+   * task is not reopenable at all (adding it again is the honest
+   * operation, with today's date on it).
+   */
+  reopen(principal: string, taskId: string, trust: TrustLevel = 'USER'): boolean {
+    const existing = this.get(principal, taskId);
+    if (existing === undefined) return false;
+    if (existing.droppedAt !== null) return false;
+    if (existing.completedAt === null) return false;
+
+    this.deps.events.append({
+      type: 'task.reopened',
+      principal,
+      trust,
+      payload: { taskId },
+    });
+    return true;
+  }
+
+  /**
    * Take it off the list without claiming it was done.
    *
    * A separate event from `complete`, not a flag on it: see the schema

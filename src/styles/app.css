@@ -4219,6 +4219,10 @@
 .tsk-row {
   display: flex;
   align-items: center;
+  /* Wraps so the reminder editor can sit under its own row rather
+     than in a modal: the task it belongs to stays visible while you
+     pick the time. */
+  flex-wrap: wrap;
   gap: 9px;
   padding: 8px 11px;
   border: 1px solid var(--hairline);
@@ -4300,6 +4304,47 @@
 
 .tsk-btn.is-danger {
   color: var(--danger, #d7373f);
+}
+
+/* A reminder that is already set reads as a state, not an action. */
+.tsk-btn.is-set {
+  border-color: var(--accent, #0b84ff);
+  color: var(--accent, #0b84ff);
+}
+
+/* The reminder editor drops below its row, full width of it. */
+.tsk-remind {
+  flex: 0 0 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--hairline);
+}
+
+.tsk-reminders {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  /* A flex child with overflow collapses to height 0 in the settings
+     sheet, which is how the calendar panel first shipped empty. */
+  flex: none;
+}
+
+.tsk-reminder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tsk-reminder .tsk-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ───────────── §29/§30 — voice, proof and portability (M9) ─────────────

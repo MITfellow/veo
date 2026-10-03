@@ -147,6 +147,22 @@ export interface TaskView {
   done: boolean;
 }
 
+/**
+ * S3's reminders. A reminder always belongs to something: a task or a
+ * calendar event. There is no free-floating reminder, because a
+ * reminder about nothing is the one that gets ignored.
+ */
+export interface ReminderView {
+  id: string;
+  text: string;
+  remindAt: number;
+  ownerKind: 'task' | 'event';
+  ownerId: string;
+  state: 'pending' | 'fired' | 'cancelled';
+  cancelledAt: number | null;
+  firedAt: number | null;
+}
+
 /** S1's calendar. The agent's own — there is no connector behind it. */
 export interface CalendarEventView {
   id: string;
@@ -623,8 +639,32 @@ export const agent = {
     await call(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify({ done: true }) });
   },
 
+  /** Untick it. The agent records this as its own event, not an erasure. */
+  async reopenTask(id: string): Promise<void> {
+    await call(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify({ done: false }) });
+  },
+
   async dropTask(id: string): Promise<void> {
     await call(`/tasks/${id}`, { method: 'DELETE' });
+  },
+
+  /* ──────────────────────────── S3: reminders ─────────────────────────── */
+
+  async reminders(includeDone = false): Promise<{ reminders: ReminderView[] }> {
+    return call(`/reminders${includeDone ? '?includeDone=true' : ''}`);
+  },
+
+  async setReminder(input: {
+    text: string;
+    remindAt: number;
+    ownerKind: 'task' | 'event';
+    ownerId: string;
+  }): Promise<ReminderView> {
+    return call('/reminders', { method: 'POST', body: JSON.stringify(input) });
+  },
+
+  async cancelReminder(id: string): Promise<void> {
+    await call(`/reminders/${id}`, { method: 'DELETE' });
   },
 
   /* ─────────────────── §28: schedules, jobs, degradation ───────────────── */

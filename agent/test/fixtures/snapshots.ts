@@ -66,6 +66,8 @@ export function tool(overrides: Partial<ToolSummary> = {}): ToolSummary {
     description: 'Reads a note the agent previously wrote, by name.',
     parameters: { type: 'object', properties: { name: { type: 'string' } } },
     minTrust: 'DERIVED',
+    risk: 'safe',
+    effect: 'local',
     ...overrides,
   };
 }

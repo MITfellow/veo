@@ -467,6 +467,37 @@ const TaskAdded = z.object({
 });
 const TaskCompleted = z.object({ taskId: z.string() });
 const TaskDropped = z.object({ taskId: z.string() });
+/**
+ * Un-ticking. A tick-box you cannot untick is a trap, and S2 shipped
+ * one: `PATCH {done:false}` returned 409 `not_reopenable` because the
+ * log had no way to say it.
+ *
+ * It is a new event rather than a deletion of the completion, which is
+ * the whole point of an append-only log: "I finished this on Tuesday
+ * and reopened it on Thursday" is a true and useful history, and
+ * erasing the Tuesday would make it a lie.
+ */
+const TaskReopened = z.object({ taskId: z.string() });
+
+/**
+ * S3's reminders. A reminder is a link between something written down
+ * and a one-shot schedule that speaks up about it, so the event
+ * carries both ends: `scheduleId` is where the firing actually lives.
+ *
+ * `reminder.fired` is appended by the worker when the schedule runs,
+ * which is what makes "you were reminded and it went past anyway"
+ * answerable from the log.
+ */
+const ReminderSet = z.object({
+  reminderId: z.string(),
+  ownerKind: z.enum(['task', 'event']),
+  ownerId: z.string(),
+  scheduleId: z.string(),
+  remindAt: z.number().int(),
+  text: z.string(),
+});
+const ReminderCancelled = z.object({ reminderId: z.string(), reason: z.string() });
+const ReminderFired = z.object({ reminderId: z.string() });
 
 const ScheduleCreated = z.object({
   scheduleId: z.string(),
@@ -704,6 +735,10 @@ export const EVENT_SCHEMAS = {
   'task.added': TaskAdded,
   'task.completed': TaskCompleted,
   'task.dropped': TaskDropped,
+  'task.reopened': TaskReopened,
+  'reminder.set': ReminderSet,
+  'reminder.cancelled': ReminderCancelled,
+  'reminder.fired': ReminderFired,
 
   'schedule.created': ScheduleCreated,
   'schedule.updated': ScheduleUpdated,

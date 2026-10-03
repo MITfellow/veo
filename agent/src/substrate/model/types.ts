@@ -43,6 +43,16 @@ export interface ModelToolSpec {
   description: string;
   /** JSON Schema. Produced from zod at M3; opaque here. */
   parameters: unknown;
+  /**
+   * How much damage a wrong call does, and whether it leaves the box.
+   *
+   * Optional because a request can be built without them, but they
+   * should be supplied: a chooser that cannot tell "look at the
+   * calendar" from "delete the appointment" is choosing blind, and the
+   * policy engine only sees the call *after* the decision was made.
+   */
+  risk?: 'safe' | 'caution' | 'dangerous';
+  effect?: 'pure' | 'local' | 'external';
 }
 
 /**

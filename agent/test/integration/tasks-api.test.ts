@@ -100,7 +100,7 @@ describe('the task routes', () => {
     expect((await call('/tasks/T-nope', { method: 'DELETE' })).status).toBe(404);
   });
 
-  it('33. PATCH completes, and says honestly that it cannot un-complete', async () => {
+  it('33. PATCH completes and un-completes, and the list follows both ways', async () => {
     const created = await call<TaskView>('/tasks', {
       method: 'POST',
       body: { title: 'Reply to Rui' },
@@ -120,15 +120,36 @@ describe('the task routes', () => {
     const found = all.body.tasks.find((task) => task.id === created.body.id);
     expect(found?.completedAt).not.toBeNull();
 
-    // S2 has no `task.reopened` event, so un-ticking is refused with a
-    // reason rather than silently ignored — a tick-box that pretends
-    // to untick is worse than one that says it cannot.
-    const reopened = await call<{ error: string }>(`/tasks/${created.body.id}`, {
+    // S3 added `task.reopened`, so the tick-box unticks. S2 shipped a
+    // 409 here and this test asserted it; the behaviour is what
+    // changed, not the standard.
+    const reopened = await call<{ done: boolean }>(`/tasks/${created.body.id}`, {
       method: 'PATCH',
       body: { done: false },
     });
-    expect(reopened.status).toBe(409);
-    expect(reopened.body.error).toBe('not_reopenable');
+    expect(reopened.status).toBe(200);
+    expect(reopened.body.done).toBe(false);
+
+    // And it is genuinely back: open list, with no completion stamp.
+    const after = await call<{ tasks: TaskView[] }>('/tasks');
+    expect(after.body.tasks.map((t) => t.id)).toContain(created.body.id);
+    expect(after.body.tasks.find((t) => t.id === created.body.id)?.completedAt).toBeNull();
+
+    // Twice is a conflict, not a silent success: the second caller is
+    // wrong about the state and should hear so.
+    const again = await call<{ error: string }>(`/tasks/${created.body.id}`, {
+      method: 'PATCH',
+      body: { done: false },
+    });
+    expect(again.status).toBe(409);
+    expect(again.body.error).toBe('not_reopenable');
+
+    // A dropped task is not reopenable either.
+    const dropped = await call<TaskView>('/tasks', { method: 'POST', body: { title: 'Cancelled plan' } });
+    await call(`/tasks/${dropped.body.id}`, { method: 'DELETE' });
+    expect(
+      (await call(`/tasks/${dropped.body.id}`, { method: 'PATCH', body: { done: false } })).status,
+    ).toBe(409);
 
     expect(
       (await call('/tasks/T-nope', { method: 'PATCH', body: { done: true } })).status,

@@ -30,6 +30,7 @@ import { ScheduleParseError } from '../orchestration/schedule.js';
 import { IDENTITY_CARD_MAX_TOKENS } from '../cognition/context/types.js';
 import type { CalendarEvent, CalendarStore } from '../cognition/calendar/store.js';
 import type { Task, TaskStore } from '../cognition/tasks/store.js';
+import type { Reminder, ReminderStore } from '../cognition/reminders/store.js';
 import { PersonaSchema, type PersonaStore } from '../cognition/persona/store.js';
 import { traceOf, renderTrace } from '../observability/trace.js';
 import { computeMetrics } from '../observability/metrics.js';
@@ -101,6 +102,8 @@ export interface ApiDeps {
   calendar?: CalendarStore;
   /** S2's task list, on the same terms. */
   tasks?: TaskStore;
+  /** S3's reminders. Omitted → the reminder routes 404. */
+  reminders?: ReminderStore;
   /**
    * §13's vault and keyring (M9). Omitted → the vault routes 404, which is
    * the honest answer for a build that has no secret storage wired.
@@ -221,6 +224,14 @@ const CreateTaskBody = z.object({
 
 const PatchTaskBody = z.object({ done: z.boolean() });
 
+const PostReminderBody = z.object({
+  text: z.string().min(1).max(200),
+  /** Epoch ms. The client resolves "20 minutes before" into an instant. */
+  remindAt: z.number().int(),
+  ownerKind: z.enum(['task', 'event']),
+  ownerId: z.string().min(1).max(64),
+});
+
 /** The wire shape of a task. */
 function taskView(task: Task) {
   return {
@@ -232,6 +243,27 @@ function taskView(task: Task) {
     completedAt: task.completedAt,
     droppedAt: task.droppedAt,
     done: task.completedAt !== null,
+  };
+}
+
+/** The wire shape of a reminder. */
+function reminderView(reminder: Reminder) {
+  return {
+    id: reminder.id,
+    text: reminder.text,
+    remindAt: reminder.remindAt,
+    ownerKind: reminder.ownerKind,
+    ownerId: reminder.ownerId,
+    // One derived field rather than making the client work it out from
+    // two nullable timestamps: three copies of that rule would drift.
+    state:
+      reminder.cancelledAt !== null
+        ? 'cancelled'
+        : reminder.firedAt !== null
+          ? 'fired'
+          : 'pending',
+    cancelledAt: reminder.cancelledAt,
+    firedAt: reminder.firedAt,
   };
 }
 
@@ -1235,10 +1267,66 @@ export class Api {
     this.add('DELETE', '/calendar/:id', ({ res, params, principal }) => {
       if (calendar === undefined) return json(res, 404, { error: 'no_calendar' });
       const cancelled = calendar.cancel(principal, params.id ?? '');
+      if (cancelled) {
+        this.deps.reminders?.cancelFor(principal, 'event', params.id ?? '', 'event cancelled');
+      }
       json(
         res,
         cancelled ? 200 : 404,
         cancelled ? { cancelled: params.id } : { error: 'no_such_event' },
+      );
+    });
+
+
+    /* ──────────────────────── S3 — reminders ───────────────────────── */
+
+    const reminders = this.deps.reminders;
+
+    this.add('GET', '/reminders', ({ res, url, principal }) => {
+      if (reminders === undefined) return json(res, 404, { error: 'no_reminders' });
+      const includeDone = url.searchParams.get('includeDone') === 'true';
+      const found = includeDone ? reminders.all(principal) : reminders.pending(principal);
+      json(res, 200, { reminders: found.map(reminderView) });
+    });
+
+    this.add('POST', '/reminders', async ({ res, body, principal }) => {
+      if (reminders === undefined) return json(res, 404, { error: 'no_reminders' });
+      const parsed = PostReminderBody.safeParse(await body());
+      if (!parsed.success) {
+        return json(res, 400, { error: 'invalid_reminder', detail: parsed.error.issues });
+      }
+      // The owner has to exist. A reminder about a deleted task is the
+      // failure that teaches someone to stop reading reminders.
+      const owner =
+        parsed.data.ownerKind === 'task'
+          ? this.deps.tasks?.get(principal, parsed.data.ownerId)
+          : this.deps.calendar?.get(principal, parsed.data.ownerId);
+      if (owner === undefined) {
+        return json(res, 404, { error: 'no_such_owner' });
+      }
+      try {
+        const reminder = reminders.set(principal, {
+          ownerKind: parsed.data.ownerKind,
+          ownerId: parsed.data.ownerId,
+          remindAt: parsed.data.remindAt,
+          text: parsed.data.text,
+        });
+        json(res, 201, reminderView(reminder));
+      } catch (error) {
+        json(res, 400, {
+          error: 'invalid_reminder',
+          detail: error instanceof Error ? error.message : 'the reminder could not be set',
+        });
+      }
+    });
+
+    this.add('DELETE', '/reminders/:id', ({ res, params, principal }) => {
+      if (reminders === undefined) return json(res, 404, { error: 'no_reminders' });
+      const cancelled = reminders.cancel(principal, params.id ?? '', 'cancelled by the user');
+      json(
+        res,
+        cancelled ? 200 : 404,
+        cancelled ? { cancelled: params.id } : { error: 'no_such_reminder' },
       );
     });
 
@@ -1289,21 +1377,37 @@ export class Api {
       }
       const id = params.id ?? '';
       if (!parsed.data.done) {
-        // Un-ticking is the one operation the event log cannot express
-        // as a new fact without a `task.reopened` event, which S2 does
-        // not have. Reported honestly rather than silently ignored.
-        return json(res, 409, {
-          error: 'not_reopenable',
-          detail: 'A completed task cannot be reopened yet. Add it again instead.',
-        });
+        // S3: un-ticking is a `task.reopened` event. It fails only for
+        // a task that does not exist, is already open, or was dropped
+        // — dropping is not undone by reopening, it is undone by
+        // deciding to do the thing again, which is a new task.
+        const reopened = tasks.reopen(principal, id);
+        return json(
+          res,
+          reopened ? 200 : 409,
+          reopened
+            ? { id, done: false }
+            : {
+                error: 'not_reopenable',
+                detail:
+                  'Only a completed task can be reopened. A dropped task is gone on ' +
+                  'purpose — add it again if you have changed your mind.',
+              },
+        );
       }
       const done = tasks.complete(principal, id);
+      // A reminder about something already done is noise, and noise is
+      // how a reminder list stops being read.
+      if (done) this.deps.reminders?.cancelFor(principal, 'task', id, 'task completed');
       json(res, done ? 200 : 404, done ? { id, done: true } : { error: 'no_such_task' });
     });
 
     this.add('DELETE', '/tasks/:id', ({ res, params, principal }) => {
       if (tasks === undefined) return json(res, 404, { error: 'no_tasks' });
       const dropped = tasks.drop(principal, params.id ?? '');
+      if (dropped) {
+        this.deps.reminders?.cancelFor(principal, 'task', params.id ?? '', 'task dropped');
+      }
       json(res, dropped ? 200 : 404, dropped ? { dropped: params.id } : { error: 'no_such_task' });
     });
 

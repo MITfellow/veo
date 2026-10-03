@@ -377,6 +377,8 @@ function toolSpecs(
       name: tool.name,
       description: tool.description,
       parameters: tool.parameters,
+      risk: tool.risk,
+      effect: tool.effect,
     }));
 }
 

@@ -251,6 +251,63 @@ export function makeTasksComplete(
   };
 }
 
+/* ───────────────────────────── tasks.reopen ────────────────────────── */
+
+const ReopenOutput = z.object({ id: z.string(), done: z.boolean() });
+
+export function makeTasksReopen(
+  deps: TaskToolDeps,
+): Tool<z.infer<typeof IdInput>, z.infer<typeof ReopenOutput>> {
+  return {
+    name: 'tasks.reopen',
+    version: '1',
+    description:
+      'Puts a finished task back on the list, by the id from tasks.list. Use this when ' +
+      'something was ticked off too early, or turned out not to be finished after all.',
+    input: IdInput,
+    output: ReopenOutput,
+    capabilities: ['tasks:write'],
+    // The exact counterpart of tasks.complete, and reversible by it,
+    // so it sits at the same trust floor. It also *restores* rather
+    // than removes, which is the side of decision 035's line the agent
+    // is allowed on.
+    minTrust: 'DERIVED',
+    risk: 'caution',
+    effect: 'local',
+    idempotent: true,
+    timeoutMs: 5000,
+
+    async execute(input, ctx) {
+      const reopened = deps.store.reopen(ctx.principal, input.id);
+      if (!reopened) {
+        const task = deps.store.get(ctx.principal, input.id);
+        const message =
+          task === undefined
+            ? `There is no task with id '${input.id}'.`
+            : task.droppedAt !== null
+              ? `'${task.title}' was dropped from the list, not completed, so there is ` +
+                'nothing to reopen. Add it again if it needs doing.'
+              : `'${task.title}' is already on the list.`;
+        return {
+          ok: false,
+          error: {
+            kind: task === undefined ? 'not_found' : 'conflict',
+            message,
+            retryable: false,
+            hint: 'Call tasks.list with closed items included to see what is finished.',
+          },
+        };
+      }
+      return { ok: true, value: { id: input.id, done: false }, trust: 'USER' };
+    },
+
+    renderForModel(result) {
+      if (!result.ok) return { text: result.error.message, truncated: false };
+      return { text: 'Back on the list.', truncated: false };
+    },
+  };
+}
+
 /* ─────────────────────────────── tasks.drop ─────────────────────────── */
 
 const DropOutput = z.object({ id: z.string(), dropped: z.boolean() });
@@ -304,5 +361,11 @@ export function makeTasksDrop(
 }
 
 export function taskTools(deps: TaskToolDeps) {
-  return [makeTasksAdd(deps), makeTasksList(deps), makeTasksComplete(deps), makeTasksDrop(deps)];
+  return [
+    makeTasksAdd(deps),
+    makeTasksList(deps),
+    makeTasksComplete(deps),
+    makeTasksReopen(deps),
+    makeTasksDrop(deps),
+  ];
 }

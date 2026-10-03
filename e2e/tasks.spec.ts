@@ -130,3 +130,77 @@ test('40. a due date is shown as a deadline, and overdue is marked', async ({
 
   await removeAll(page);
 });
+
+/**
+ * S3 tests 41–42: unticking, and reminders.
+ *
+ * Test 41 is the one S2 could not have: the tick-box had no untick,
+ * because the log had no event for it.
+ */
+test('41. a finished task can be put back on the list', async ({ page, isMobile }) => {
+  await openSettings(page, isMobile);
+  await removeAll(page);
+
+  const title = unique('Sand the door');
+  await page.getByLabel('Task title').fill(title);
+  await addTask(page).click();
+  await expect(page.getByText(title)).toBeVisible();
+
+  // Tick it. It leaves the open list.
+  await page.getByRole('button', { name: `Mark ${title} done` }).click();
+  await page.waitForTimeout(300);
+  await expect(page.getByText(title)).toHaveCount(0);
+
+  // Show the finished ones, and untick it.
+  await page.locator('.tsk-list ~ .tsk-btn, .tsk-btn').getByText('Show finished').click();
+  await expect(page.getByText(title)).toBeVisible();
+  await page.getByRole('button', { name: `Put ${title} back on the list` }).click();
+  await page.waitForTimeout(300);
+
+  // Back on the open list, and still there after a reload — this is
+  // the agent's event log, not a checkbox in the browser.
+  await page.locator('.tsk-btn').getByText('Hide finished').click();
+  await expect(page.getByText(title)).toBeVisible();
+
+  await page.reload();
+  await openSettings(page, isMobile);
+  await expect(page.getByText(title)).toBeVisible();
+
+  await removeAll(page);
+});
+
+test('42. a reminder can be set on a task and called off', async ({ page, isMobile }) => {
+  await openSettings(page, isMobile);
+  await removeAll(page);
+
+  const title = unique('Call the vet');
+  await page.getByLabel('Task title').fill(title);
+  await addTask(page).click();
+  await expect(page.getByText(title)).toBeVisible();
+
+  const row = page.locator('.tsk-row', { hasText: title });
+  await row.getByRole('button', { name: `Set a reminder for ${title}` }).click();
+  await page.getByLabel(`Remind me about ${title} at`).fill('2030-01-15T09:30');
+  await row.getByRole('button', { name: 'Set', exact: true }).click();
+  await page.waitForTimeout(400);
+
+  // The row now says a reminder exists, and the panel lists it.
+  await expect(row.getByRole('button', { name: `Reminder set for ${title}` })).toBeVisible();
+  const listed = page.locator('.tsk-reminder', { hasText: title });
+  await expect(listed).toBeVisible();
+
+  // It survives a reload: the reminder is a row in the agent's log and
+  // a one-shot schedule in its scheduler, not component state.
+  await page.reload();
+  await openSettings(page, isMobile);
+  await expect(page.locator('.tsk-reminder', { hasText: title })).toBeVisible();
+
+  // Calling it off takes it off the list.
+  await page.locator('.tsk-reminder', { hasText: title })
+    .getByRole('button', { name: 'Call off' })
+    .click();
+  await page.waitForTimeout(400);
+  await expect(page.locator('.tsk-reminder', { hasText: title })).toHaveCount(0);
+
+  await removeAll(page);
+});

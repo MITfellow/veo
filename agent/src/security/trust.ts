@@ -44,6 +44,16 @@ export type Capability =
   /** S2's task list. Split for the same reason the calendar's is. */
   | 'tasks:read'
   | 'tasks:write'
+  /**
+   * S3's reminders. Separate from `schedule:create` on purpose — see
+   * decision 041. A reminder is a fixed sentence at a fixed instant
+   * about something the person already wrote down; a schedule is a
+   * standing grant of future authority to start runs. Collapsing them
+   * would either make reminders unreachable to the agent or hand it
+   * back the thing decision 035 took away.
+   */
+  | 'reminder:read'
+  | 'reminder:set'
   | 'approval:request';
 
 /**
@@ -73,6 +83,8 @@ const CAPABILITY_CEILING: Record<TrustLevel, ReadonlySet<Capability>> = {
     'calendar:write',
     'tasks:read',
     'tasks:write',
+    'reminder:read',
+    'reminder:set',
     'approval:request',
   ]),
   USER: new Set<Capability>([
@@ -93,6 +105,8 @@ const CAPABILITY_CEILING: Record<TrustLevel, ReadonlySet<Capability>> = {
     'calendar:write',
     'tasks:read',
     'tasks:write',
+    'reminder:read',
+    'reminder:set',
     'approval:request',
   ]),
   // Model output derived from SYSTEM/USER content only. Can act, but cannot
@@ -121,6 +135,11 @@ const CAPABILITY_CEILING: Record<TrustLevel, ReadonlySet<Capability>> = {
     // its own minTrust rather than by removing the capability.
     'tasks:read',
     'tasks:write',
+    // Reminders, but still no `schedule:create` — decision 041. The
+    // agent may say "I will remind you at six"; it may not give
+    // itself a recurring reason to wake up and do work.
+    'reminder:read',
+    'reminder:set',
     // **No `schedule:create`.** Found by an M8 adversarial test and changed
     // here rather than papered over downstream: a schedule is a standing
     // grant of future authority, and DERIVED is model output, which is
@@ -144,6 +163,8 @@ const CAPABILITY_CEILING: Record<TrustLevel, ReadonlySet<Capability>> = {
     // in someone's week that nobody remembers making.
     'calendar:read',
     'tasks:read',
+    // Read but not set, on the same reasoning as the calendar above.
+    'reminder:read',
     'approval:request',
   ]),
   // §12.2 verbatim: no vault reads, no money, no outbound messages, no

@@ -46,6 +46,7 @@ import { MessageSearch } from './cognition/search/messages.js';
 import { PersonaStore } from './cognition/persona/store.js';
 import { JobQueue } from './orchestration/queue.js';
 import { ScheduleStore, SCHEDULED_RUN } from './orchestration/schedule.js';
+import { ReminderStore } from './cognition/reminders/store.js';
 import { Worker } from './orchestration/worker.js';
 import { Degradation } from './orchestration/degradation.js';
 import { createSecurity } from './security/index.js';
@@ -182,11 +183,34 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
   const tasks = new TaskStore({ storage, events, clock, ids });
   const conversations = new MessageSearch({ storage });
 
+  const queue = new JobQueue({
+    storage,
+    events,
+    clock,
+    ids,
+    leaseMs: substrate.config.queue.leaseMs,
+    maxAttempts: substrate.config.queue.maxAttempts,
+    baseBackoffMs: substrate.config.queue.baseBackoffMs,
+  });
+  const schedules = new ScheduleStore({ storage, events, clock, ids, queue });
+
+  // S3: reminders are a link between something written down and a
+  // one-shot schedule, so the queue and the scheduler are built here,
+  // above the registry, rather than down with the worker.
+  const reminders = new ReminderStore({ storage, events, clock, ids, schedules });
+
+  // Closing an owner takes its reminders with it. That cascade lives
+  // in the HTTP layer, which is where both sides are already in
+  // scope: a dependency from the task store onto the reminder store
+  // would be a cycle, and the task list does not need to know that
+  // reminders exist at all.
+
   const registry = new ToolRegistry();
   registerBuiltins(registry, {
     memory: memory.toolDeps(),
     calendar: { store: calendar },
     tasks: { store: tasks },
+    reminders: { store: reminders, tasks, calendar },
     conversations: { search: conversations },
   });
   registry.register(
@@ -240,6 +264,8 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
           parameters: registry.specsFor((candidate) => candidate.name === tool.name)[0]
             ?.parameters ?? {},
           minTrust: tool.minTrust,
+          risk: tool.risk,
+          effect: tool.effect,
         })),
     },
   });
@@ -287,16 +313,6 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
     ladder.report('model', 'no ARISH_API_KEY is configured; answering from the offline fallback');
   }
 
-  const queue = new JobQueue({
-    storage,
-    events,
-    clock,
-    ids,
-    leaseMs: substrate.config.queue.leaseMs,
-    maxAttempts: substrate.config.queue.maxAttempts,
-    baseBackoffMs: substrate.config.queue.baseBackoffMs,
-  });
-  const schedules = new ScheduleStore({ storage, events, clock, ids, queue });
 
   /** How many interactive runs are in flight. Background work waits. */
   let interactive = 0;
@@ -313,6 +329,15 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
         const prompt = typeof job.payload.prompt === 'string' ? job.payload.prompt : '';
         const scheduleId = typeof job.payload.scheduleId === 'string' ? job.payload.scheduleId : '';
         const schedule = scheduleId === '' ? null : schedules.get(scheduleId);
+
+        // A reminder is a one-shot schedule carrying its reminder id,
+        // so the moment it actually fires is recorded here — at the
+        // point where it really happened, not when it was set. "You
+        // were reminded and it went past anyway" is only answerable
+        // from the log if the log says it.
+        const reminderId =
+          typeof job.payload.reminderId === 'string' ? job.payload.reminderId : '';
+        if (reminderId !== '') reminders.markFired(job.principal, reminderId);
 
         // One session per schedule, reused, so a recurring briefing reads
         // as a continuing thread rather than a pile of orphan sessions.
@@ -380,6 +405,7 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
     // and edit directly is one they cannot trust the agent with.
     calendar,
     tasks,
+    reminders,
     askBudget,
     auditor,
     // §28 + §27.

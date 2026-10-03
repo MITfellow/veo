@@ -21,7 +21,12 @@
  * shipped app run the same code path.
  */
 import type { ModelCapabilities, ModelProvider } from '../substrate/ports.js';
-import { parseChunk, type ModelChunk, type ModelRequest } from '../substrate/model/types.js';
+import {
+  parseChunk,
+  type ModelChunk,
+  type ModelRequest,
+  type ModelToolSpec,
+} from '../substrate/model/types.js';
 
 const NO_MODEL =
   'I am running without a language model, so I cannot answer that one. ' +
@@ -31,8 +36,6 @@ const NO_MODEL =
 
 export interface OfflineProviderOptions {
   id?: string;
-  /** Tool names the provider is allowed to reach for. */
-  tools?: readonly string[];
 }
 
 export class OfflineProvider implements ModelProvider {
@@ -62,12 +65,19 @@ export class OfflineProvider implements ModelProvider {
 
     // Which tool? Not by name — a provider that knows a tool's name has
     // put a hole in the capability boundary (invariant 9), and this file
-    // sits below L5. It picks by *shape and description*, from whatever the
-    // assembler chose to offer: a tool that needs no arguments (this
-    // provider cannot invent arguments) whose words overlap the question.
+    // sits below L5. It picks by *shape and description*, from whatever
+    // the assembler chose to offer, and fills the arguments from the
+    // JSON schema. Until S3 it could only call tools that took no
+    // arguments at all, which left most of the toolbox unreachable on
+    // the default configuration.
     const candidate = toolResult ? undefined : bestTool(req, asked);
     if (candidate !== undefined) {
-      yield parseChunk(this.id, { type: 'tool-call', id: 'offline-1', name: candidate, input: {} });
+      yield parseChunk(this.id, {
+        type: 'tool-call',
+        id: 'offline-1',
+        name: candidate.name,
+        input: candidate.input,
+      });
       yield parseChunk(this.id, { type: 'usage', inputTokens: tokens(req), outputTokens: 8, costMicros: 0 });
       yield parseChunk(this.id, { type: 'finish', reason: 'tool-calls' });
       return;
@@ -93,41 +103,172 @@ export class OfflineProvider implements ModelProvider {
 }
 
 /**
- * The best zero-argument tool for the question, or nothing.
+ * The best tool for the question, with its arguments, or nothing.
  *
- * Deliberately dumb: overlap of meaningful words between the question and
- * the tool's own description, with a floor so that an unrelated question
- * calls nothing. A real model does this far better; the point here is only
- * that the *path* — gate, outbox, observation, trust — is real.
+ * Deliberately dumb: overlap of meaningful words between the question
+ * and the tool's own description, with a floor so that an unrelated
+ * question calls nothing. A real model does this far better; the point
+ * here is only that the *path* — gate, outbox, observation, trust — is
+ * real, and that it is real for every tool rather than only for the
+ * four that happen to take no arguments.
+ *
+ * **Name-blind, and it has to stay that way.** The moment this file
+ * says `if (tool.name === ...)` the plugin contract is a lie and §20's
+ * "adding a tool touches one file" stops being true. Everything below
+ * is driven by the JSON schema the registry already supplies — which
+ * §36 calls the single definition of a tool's arguments, and which this
+ * provider used to ignore entirely.
+ */
+/**
+ * Function words and pleasantries, which carry no intent.
+ *
+ * This list is load-bearing, not cosmetic. "hello there" once matched a
+ * tool whose description ends "...this removes something they put
+ * there" — a single function word, shared by accident, was the entire
+ * evidence for a destructive call. Greetings are in here for the same
+ * reason: they are the most common thing a person types that means
+ * "nothing yet", and they must match nothing.
  */
 const FILLER = new Set([
   'the', 'and', 'for', 'you', 'your', 'can', 'what', 'who', 'how', 'why', 'does', 'this',
   'that', 'with', 'from', 'about', 'please', 'tell', 'give', 'any', 'are', 'was', 'use',
   'used', 'using', 'get', 'has', 'have', 'its', 'not', 'but', 'all', 'returns', 'return',
   'current', 'user', 'would', 'read', 'into', 'their', 'when', 'where',
+  // Function words.
+  'there', 'here', 'they', 'them', 'then', 'than', 'some', 'such', 'each', 'other',
+  'which', 'while', 'been', 'being', 'were', 'will', 'shall', 'should', 'could', 'may',
+  'might', 'must', 'onto', 'over', 'under', 'between', 'also', 'just', 'only', 'very',
+  'more', 'most', 'much', 'many', 'something', 'anything', 'everything', 'nothing',
+  'someone', 'anyone', 'everyone', 'thing', 'things', 'stuff', 'one', 'two', 'both',
+  // Pleasantries. A greeting is the commonest input that means nothing.
+  // Times of day and 'now' are deliberately *absent*: they are
+  // pleasantries in "good morning" but real signal in "what is on my
+  // calendar this morning", and a read costs little when it is wrong.
+  'hello', 'hallo', 'hey', 'hiya', 'good', 'thanks', 'thank', 'okay', 'yeah', 'yes',
+  'sure', 'sorry', 'bye', 'cheers', 'hope', 'well', 'nice', 'great', 'cool',
 ]);
 
 function meaningful(text: string): Set<string> {
   return new Set((text.toLowerCase().match(/[a-z]{3,}/g) ?? []).filter((w) => !FILLER.has(w)));
 }
 
-function bestTool(request: ModelRequest, asked: string): string | undefined {
-  const words = meaningful(asked);
-  let best: { name: string; score: number } | undefined;
+/**
+ * Only `safe` tools, and only `pure`/`local` ones.
+ *
+ * This provider guesses. It matched "hello there" to `calendar.cancel`
+ * — because the word "there" appears in that tool's description — and
+ * raised a dangerous approval against an invented id. That is not a
+ * scoring bug to be tuned away; it is the whole category. Something
+ * that cannot understand the question must not be trusted to decide a
+ * write, and no amount of threshold-fiddling makes a word-overlap
+ * matcher safe to hand a delete.
+ *
+ * Reading is different: a wrong search wastes a call and the person
+ * sees an unhelpful answer, which is recoverable. So the rule is a
+ * property of the tool, read from the spec, rather than a list of
+ * names this file is not allowed to know.
+ */
+const safeToGuess = (tool: ModelToolSpec): boolean =>
+  (tool.risk ?? 'dangerous') === 'safe' && (tool.effect ?? 'external') !== 'external';
 
-  for (const tool of request.tools ?? []) {
-    const parameters = tool.parameters as { required?: unknown };
-    const required = Array.isArray(parameters.required) ? parameters.required : [];
-    if (required.length > 0) continue;
+interface Slot {
+  type?: string | string[];
+  description?: string;
+  enum?: unknown[];
+}
 
-    let score = 0;
-    for (const word of meaningful(`${tool.name} ${tool.description}`)) {
-      if (words.has(word)) score += 1;
-    }
-    if (score >= 1 && (best === undefined || score > best.score)) best = { name: tool.name, score };
+const isType = (slot: Slot, want: string): boolean =>
+  slot.type === want || (Array.isArray(slot.type) && slot.type.includes(want));
+
+/**
+ * One required argument, from the question, using only the schema.
+ *
+ * Returns `undefined` when it cannot tell — and the caller then
+ * abandons the whole call. A half-filled call fails zod validation and
+ * the person reads the resulting tool error as a crash, which is a
+ * worse answer than "I cannot do that without a model".
+ */
+function fillSlot(slot: Slot, asked: string): unknown {
+  if (Array.isArray(slot.enum) && slot.enum.length > 0) {
+    const hit = slot.enum.find(
+      (option) => typeof option === 'string' && asked.includes(option.toLowerCase()),
+    );
+    return hit;
   }
 
-  return best?.name;
+  if (isType(slot, 'number') || isType(slot, 'integer')) {
+    const match = asked.match(/-?\d+(\.\d+)?/);
+    return match === null ? undefined : Number(match[0]);
+  }
+
+  if (isType(slot, 'boolean')) return undefined;
+
+  if (isType(slot, 'string')) {
+    // A quoted span is the user being explicit about the value, so it
+    // wins over anything inferred.
+    const quoted = asked.match(/["\u201c']([^"\u201d']{2,})["\u201d']/);
+    if (quoted?.[1] !== undefined) return quoted[1];
+
+    // Otherwise the question's own content words. Good enough for a
+    // search query, which is the common case; wrong for a title, which
+    // is why writing tools stay behind an approval.
+    const words = [...meaningful(asked)];
+    return words.length === 0 ? undefined : words.join(' ');
+  }
+
+  return undefined;
+}
+
+function bestTool(
+  request: ModelRequest,
+  asked: string,
+): { name: string; input: Record<string, unknown> } | undefined {
+  const words = meaningful(asked);
+  let best: { name: string; input: Record<string, unknown>; score: number } | undefined;
+
+  for (const tool of request.tools ?? []) {
+    if (!safeToGuess(tool)) continue;
+
+    const parameters = tool.parameters as {
+      required?: unknown;
+      properties?: Record<string, Slot>;
+    };
+    const properties = parameters.properties ?? {};
+    const required = Array.isArray(parameters.required) ? (parameters.required as string[]) : [];
+
+    const own = meaningful(`${tool.name} ${tool.description}`);
+    let hits = 0;
+    for (const word of own) if (words.has(word)) hits += 1;
+
+    // One genuine content word in common is enough to try; the words
+    // that are *not* genuine are excluded by FILLER above, which is
+    // where that judgement belongs. A hit count threshold here instead
+    // would have silently killed "what is the rainfall in Shillong",
+    // whose only overlap with its tool is the word "rainfall".
+    if (hits < 1) continue;
+
+    // Normalised, so a tool with a long description does not win on
+    // volume alone. Raw overlap made the wordiest tool the default
+    // answer to everything.
+    const score = hits / Math.sqrt(own.size || 1);
+
+    const input: Record<string, unknown> = {};
+    let fillable = true;
+    for (const name of required) {
+      const slot = properties[name];
+      const value = slot === undefined ? undefined : fillSlot(slot, asked);
+      if (value === undefined) {
+        fillable = false;
+        break;
+      }
+      input[name] = value;
+    }
+    if (!fillable) continue;
+
+    if (best === undefined || score > best.score) best = { name: tool.name, input, score };
+  }
+
+  return best === undefined ? undefined : { name: best.name, input: best.input };
 }
 
 /**
