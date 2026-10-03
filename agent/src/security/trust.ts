@@ -54,6 +54,14 @@ export type Capability =
    */
   | 'reminder:read'
   | 'reminder:set'
+  /**
+   * S6's persona (decision 043). Narrower than it sounds: it covers the
+   * agent's own name and what it calls the person, nothing else about
+   * its voice. Granted to USER and SYSTEM only, which is what makes it
+   * safe — effective trust is the minimum over a run, so a turn that
+   * has read a web page is already below USER and cannot reach it.
+   */
+  | 'persona:write'
   | 'approval:request';
 
 /**
@@ -85,6 +93,7 @@ const CAPABILITY_CEILING: Record<TrustLevel, ReadonlySet<Capability>> = {
     'tasks:write',
     'reminder:read',
     'reminder:set',
+    'persona:write',
     'approval:request',
   ]),
   USER: new Set<Capability>([
@@ -107,6 +116,7 @@ const CAPABILITY_CEILING: Record<TrustLevel, ReadonlySet<Capability>> = {
     'tasks:write',
     'reminder:read',
     'reminder:set',
+    'persona:write',
     'approval:request',
   ]),
   // Model output derived from SYSTEM/USER content only. Can act, but cannot

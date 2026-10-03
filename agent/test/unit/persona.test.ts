@@ -166,7 +166,11 @@ describe('the persona', () => {
       .map((m) => m.content)
       .join('\n');
     expect(system).toContain('You are called Ada.');
-    expect(system).toContain('How you sound (set by the person):');
+    expect(system).toContain('How you sound:');
+    // Decision 043: the heading no longer claims the person set this,
+    // because `persona.name` can set it too. Pinned negatively as well,
+    // so the old wording cannot come back by a careless revert.
+    expect(system).not.toContain('set by the person');
     // In block 1, which is unevictable — and one more item than before.
     const kernel = voiced.blocks.find((b) => b.name === 'kernel')!;
     const plainKernel = plain.blocks.find((b) => b.name === 'kernel')!;

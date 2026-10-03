@@ -124,6 +124,19 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
    * a model without an assembled context fails loudly instead of running an
    * ungoverned agent.
    */
+  /**
+   * Revision instructions in flight, keyed by step (decision 042).
+   *
+   * The gate knows which article was violated and what to say about
+   * it; the runner owns the budget that a rewrite spends. Neither
+   * should import the other, so the composition root — the one place
+   * allowed to know both — carries the message between them. Bounded
+   * because a run that never collects its instruction must not leak:
+   * an entry is deleted the moment it is read, and the map is capped.
+   */
+  const pendingRevisions = new Map<string, string>();
+  const REVISION_CARRY_MAX = 64;
+
   const governedModel = new GovernedProvider({
     inner: rawModel,
     constitution: () => constitution.current(),
@@ -149,6 +162,14 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
           buffered: meta.buffered,
         },
       });
+
+      if (meta.revisionPrompt !== undefined && meta.stepId !== '') {
+        if (pendingRevisions.size >= REVISION_CARRY_MAX) {
+          const oldest = pendingRevisions.keys().next();
+          if (oldest.done !== true) pendingRevisions.delete(oldest.value);
+        }
+        pendingRevisions.set(meta.stepId, meta.revisionPrompt);
+      }
     },
   });
 
@@ -212,6 +233,9 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
     tasks: { store: tasks },
     reminders: { store: reminders, tasks, calendar },
     conversations: { search: conversations },
+    // S6: the agent may be told its own name. Store-backed, so it is
+    // wired here rather than being a module constant.
+    persona: { persona },
   });
   registry.register(
     makeHistoryExpand(compactor, (runId) => {
@@ -276,6 +300,12 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
     logger,
     model: governedModel as never,
     modelConfigured: apiKey !== undefined && apiKey !== '',
+    revisionInstruction: (_runId, stepId) => {
+      const instruction = pendingRevisions.get(stepId);
+      if (instruction === undefined) return null;
+      pendingRevisions.delete(stepId);
+      return instruction;
+    },
     invoker,
     approvals,
     suspensions,

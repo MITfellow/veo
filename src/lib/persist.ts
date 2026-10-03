@@ -252,7 +252,33 @@ function withoutBlobs(state: Store): Store {
 }
 
 /** The pre-IndexedDB path, still used as a fallback and by the sync flush. */
-export function saveToLocal(original: Store, savedAt = Date.now()): SaveResult {
+export interface SaveToLocalOptions {
+  /**
+   * May this write throw away photos to fit?
+   *
+   * Only when localStorage is the **only** store there is. As the
+   * page-hide escape hatch it must be false, and that is not a tuning
+   * choice — it is the difference between a fallback and data loss.
+   * `shrink()` strips attachment `src`, and the envelope it writes
+   * carries a *newer* `savedAt` than the intact copy in IndexedDB, so
+   * the next `loadState` prefers the shrunken one and the photos are
+   * gone for good. A fallback that outranks the primary is not a
+   * fallback.
+   *
+   * Found when a boot-time contact rename dirtied the state of an
+   * eight-megabyte account: nothing about the rename was wrong, it was
+   * just the first thing that ever made the flush fire with something
+   * that large in memory. Any send would have done it eventually.
+   */
+  shrinkOnQuota?: boolean;
+}
+
+export function saveToLocal(
+  original: Store,
+  savedAt = Date.now(),
+  options: SaveToLocalOptions = {},
+): SaveResult {
+  const { shrinkOnQuota = true } = options;
   const state = withoutBlobs(original);
   const write = (s: Store) => {
     const envelope: Envelope = { version: SCHEMA_VERSION, savedAt, state: s };
@@ -264,6 +290,8 @@ export function saveToLocal(original: Store, savedAt = Date.now()): SaveResult {
     return { ok: true };
   } catch (e) {
     if (isQuotaError(e)) {
+      // Write nothing at all rather than a worse copy that wins on date.
+      if (!shrinkOnQuota) return { ok: false, reason: 'quota' };
       try {
         write(shrink(state));
         return { ok: false, reason: 'quota' };

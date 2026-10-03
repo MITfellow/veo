@@ -222,7 +222,7 @@ test('the log follows along as the agent does something', async ({ page, isMobil
 /* ─────────────────── §30 the trace, §29 stopping a run ────────────────── */
 
 test('an answer can explain itself from the bubble that gave it', async ({ page }) => {
-  await page.locator('.conv-row', { hasText: 'Agent' }).click();
+  await page.locator('.conv-agent').click();
   const field = page.locator('.field textarea').first();
   await expect(field).toBeVisible();
   await field.click();

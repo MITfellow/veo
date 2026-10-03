@@ -165,6 +165,17 @@ export interface RunnerDeps {
    */
   observer?: RunObserver;
   /**
+   * The rewrite instruction for a step the constitution withheld
+   * (decision 042).
+   *
+   * A port, not a dependency on the constitution module: the runner
+   * must not know how an article is checked, only that the governance
+   * layer asked for one more attempt and what to say. The composition
+   * root holds both ends and wires them.
+   */
+  revisionInstruction?: (runId: string, stepId: string) => string | null;
+
+  /**
    * Whether a real language model is configured. Fed to the constitution's
    * checks (§24.4): "answered confidently with no grounding" is a finding
    * about a model, and the offline provider's canned refusal is not one.
@@ -371,6 +382,16 @@ export class Runner {
     const observations: Observation[] = [];
     /** §23 allows one compaction retry per run, and exactly one. */
     let overflowRetried = false;
+    /**
+     * Decision 042: the constitution gets exactly one rewrite per run.
+     *
+     * `pendingRevision` is the instruction to inject into the next
+     * step; `revisionsSpent` makes sure a model that cannot satisfy an
+     * article twice does not get a third go — a governance loop that
+     * can run away is worse than the thing it is checking.
+     */
+    let pendingRevision: string | null = null;
+    let revisionsSpent = 0;
     let contextScale = 1;
 
     // The approved call runs FIRST, at the step that asked for it, so its
@@ -557,8 +578,14 @@ export class Runner {
 
         const modelRequest: ModelRequest = {
           model: model.id,
-          messages: context.messages,
-          governance,
+          messages:
+            pendingRevision === null
+              ? context.messages
+              : [
+                  ...context.messages,
+                  { role: 'system' as const, content: pendingRevision, trust: 'SYSTEM' as const },
+                ],
+          governance: { ...governance, revisionAttempt: revisionsSpent },
           ...(context.tools.length > 0 ? { tools: context.tools } : {}),
           maxOutputTokens: Math.min(limits.maxTokens - caps.tokens, 4096),
         };
@@ -696,6 +723,49 @@ export class Runner {
           stepId,
           correlationId: runId,
         });
+
+        /* ── the constitution asked for a rewrite (decision 042) ───────── */
+        //
+        // The gate withheld the draft and said so. Spending the step
+        // here rather than inside the gate is the whole point: this
+        // retry costs steps, tokens and wall-clock from the same caps
+        // as any other, and it honours the cancellation signal. A
+        // provider that re-entered itself would escape all three.
+        if (totals.finishReason === 'revision-required') {
+          this.appendStepFinished(request, runId, stepId, stepIndex, 'revision', latencyMs);
+          caps.steps++;
+
+          // The budget check comes before the fetch, not after it. Reading
+          // the port consumes the stashed instruction, so asking for one we
+          // have already decided not to use throws it away — and on a
+          // shared map that is somebody else's rewrite.
+          const instruction = revisionsSpent === 0
+            ? this.deps.revisionInstruction?.(runId, stepId) ?? null
+            : null;
+          if (instruction !== null) {
+            pendingRevision = instruction;
+            revisionsSpent += 1;
+            observations.length = 0;
+            continue;
+          }
+
+          // No instruction to work from, or the one rewrite is already
+          // spent. Withholding silently would leave the user staring
+          // at nothing, which is the failure this decision exists to
+          // avoid, so say what happened.
+          const stuck =
+            'I stopped myself from sending that, because it conflicted with my ' +
+            'constitution, and I was not able to rewrite it in the attempt I allow ' +
+            'myself. Tell me how you want to proceed.';
+          this.appendAgentMessage(request, runId, stepId, stuck, 'revision-failed');
+          return this.finish(
+            runId, request, 'revision-failed', caps, stuck, inputTokens, outputTokens,
+          );
+        }
+
+        // A rewrite that got through clears the slate: the instruction
+        // must not ride along into an unrelated later step.
+        pendingRevision = null;
 
         finalText += totals.text;
         observations.length = 0;
@@ -1060,7 +1130,7 @@ export class Runner {
     runId: string,
     stepId: string,
     index: number,
-    outcome: 'text' | 'tools' | 'finish' | 'error',
+    outcome: 'text' | 'tools' | 'finish' | 'error' | 'revision',
     durationMs: number,
   ): void {
     this.deps.events.append({

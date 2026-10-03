@@ -110,6 +110,10 @@ export const STOP_REASONS = [
   'daily-cap',
   'denied',
   'approval-expired',
+  // Decision 042. The constitution withheld a draft, the one rewrite it
+  // allows was spent or unavailable, and the run ended with an
+  // explanation instead of the words the article objected to.
+  'revision-failed',
 ] as const;
 export const StopReasonSchema = z.enum(STOP_REASONS);
 
@@ -132,7 +136,9 @@ const RunDegraded = z.object({ level: z.string(), reason: z.string() });
 const StepStarted = z.object({ index: z.number().int().nonnegative(), effectiveTrust: TrustLevelSchema });
 const StepFinished = z.object({
   index: z.number().int().nonnegative(),
-  outcome: z.enum(['text', 'tools', 'finish', 'error']),
+  // 'revision' — the step produced a draft the constitution withheld;
+  // it cost budget like any other step but contributed no text.
+  outcome: z.enum(['text', 'tools', 'finish', 'error', 'revision']),
   durationMs: z.number().int().nonnegative(),
 });
 
@@ -624,7 +630,12 @@ const ConstitutionEnforced = z.object({
       detail: z.string().default(''),
     }),
   ),
-  remedy: z.enum(['none', 'annotate', 'revise', 'block']).default('none'),
+  /**
+   * `revise` means a revision was requested and the draft withheld;
+   * `revise-failed` means the rewrite was tried and still violated,
+   * so the answer went out with a disclosure attached (decision 042).
+   */
+  remedy: z.enum(['none', 'annotate', 'revise', 'revise-failed', 'block']).default('none'),
   /** True when a blocking article forced the stream to be buffered (§2.4). */
   buffered: z.boolean().default(false),
 });

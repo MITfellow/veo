@@ -83,6 +83,13 @@ export interface GovernanceHints {
   foreign: readonly string[];
   trust: TrustLevel;
   modelConfigured: boolean;
+  /**
+   * Which revision attempt this is (decision 042). 0 or absent is the
+   * first draft; 1 means the gate already withheld one draft and this
+   * is the rewrite. The gate reads it to decide between withholding
+   * again and disclosing — it will never withhold twice.
+   */
+  revisionAttempt?: number;
 }
 
 export interface ModelRequest {
@@ -103,7 +110,22 @@ export interface ModelRequest {
 
 /* ───────────────────────────────── chunks ────────────────────────────────── */
 
-export const FINISH_REASONS = ['stop', 'length', 'tool-calls', 'content-filter'] as const;
+export const FINISH_REASONS = [
+  'stop',
+  'length',
+  'tool-calls',
+  'content-filter',
+  /**
+   * The constitution asked for a revision (decision 042).
+   *
+   * The draft was buffered, judged, found to violate an article whose
+   * remedy is `revise`, and **not sent**. The caller is expected to
+   * regenerate once with the instruction the gate recorded. A caller
+   * that does not handle it sees an explicit reason rather than a
+   * silently empty stream.
+   */
+  'revision-required',
+] as const;
 export type FinishReason = (typeof FINISH_REASONS)[number];
 
 export const MODEL_ERROR_KINDS = [

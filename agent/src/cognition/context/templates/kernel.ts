@@ -60,7 +60,15 @@ export const KERNEL: Template = {
     // the assembler may drop when the window gets tight.
     return [
       { id: 'kernel', text },
-      { id: 'kernel:persona', text: ['', 'How you sound (set by the person):', ...persona].join('\n') },
+      {
+        id: 'kernel:persona',
+        // Not "set by the person" any more: since decision 043 the name
+        // lines can come from `persona.name`, which the person triggers by
+        // saying a name out loud rather than by opening Settings. A header
+        // that overstates where this came from is a small lie in the one
+        // block that can never be evicted.
+        text: ['', 'How you sound:', ...persona].join('\n'),
+      },
     ];
   },
 };

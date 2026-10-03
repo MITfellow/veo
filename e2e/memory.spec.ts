@@ -26,7 +26,7 @@ test.beforeEach(async ({ page, request }) => {
 });
 
 async function tell(page: Page, text: string) {
-  await page.locator('.conv-row', { hasText: 'Agent' }).click();
+  await page.locator('.conv-agent').click();
   const field = page.locator('.field textarea').first();
   await field.click();
   await field.fill(text);

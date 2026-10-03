@@ -92,7 +92,7 @@ test('the compliance tab counts what the checks found, including what they could
   isMobile,
 }) => {
   // Say something so a real model call is judged by the real gate.
-  await page.locator('.conv-row', { hasText: 'Agent' }).click();
+  await page.locator('.conv-agent').click();
   const field = page.locator('.field textarea').first();
   await field.click();
   await field.fill('what time is it');

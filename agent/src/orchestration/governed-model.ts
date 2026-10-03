@@ -45,10 +45,12 @@
  * the stream, so the founding charter keeps that list to two.
  */
 import {
-  judge,
   annotationFor,
   blockMessageFor,
   blockingArticles,
+  judge,
+  revisionFailedNoteFor,
+  revisionPromptFor,
   type Judgment,
 } from '../cognition/constitution/enforce.js';
 import { emptyEvidence, type RunEvidence } from '../cognition/constitution/checks.js';
@@ -81,7 +83,19 @@ export interface JudgmentMeta {
   version: number;
   hash: string;
   buffered: boolean;
-  remedyApplied: 'none' | 'annotate' | 'revise' | 'block';
+  /**
+   * `revise` now means a revision was genuinely requested and the
+   * draft withheld; `revise-failed` means the rewrite was tried and
+   * still violated, so the text went out with a disclosure attached
+   * (decision 042).
+   */
+  remedyApplied: 'none' | 'annotate' | 'revise' | 'revise-failed' | 'block';
+  /**
+   * Present only with `remedyApplied: 'revise'`. The instruction the
+   * runner should hand back to the model for its one rewrite — built
+   * here because this is where the violated articles are known.
+   */
+  revisionPrompt?: string;
 }
 
 export class GovernedProvider implements ModelProvider {
@@ -143,12 +157,42 @@ export class GovernedProvider implements ModelProvider {
       return;
     }
 
+    if (mustBuffer && violations.length > 0 && judgment.remedy === 'revise') {
+      // The regeneration happens in the runner, not here: a provider
+      // that re-entered itself would bypass the step budget, the token
+      // cap and the cancellation signal. The gate decides the verdict;
+      // the runner decides whether to spend another step on it.
+      //
+      // What the gate *must* do is withhold the draft. Until decision
+      // 042 it recorded `revise` and then sent the offending text
+      // anyway, so the log claimed a revision that never happened and
+      // the user read the words the article had just objected to.
+      const attempt = request.governance?.revisionAttempt ?? 0;
+
+      if (attempt === 0) {
+        remedyApplied = 'revise';
+        this.report(judgment, request, view, mustBuffer, remedyApplied, {
+          revisionPrompt: revisionPromptFor(doc, violations),
+        });
+        yield { type: 'finish', reason: 'revision-required' } satisfies ModelChunk;
+        return;
+      }
+
+      // Second time. Never suppress twice: the article's author chose
+      // `revise` over `block`, and turning a failed rewrite into a
+      // refusal substitutes our judgment for theirs. Send it, and say
+      // plainly that it still conflicts.
+      remedyApplied = 'revise-failed';
+      for (const chunk of buffer) yield chunk;
+      yield {
+        type: 'text-delta',
+        text: revisionFailedNoteFor(doc, violations),
+      } satisfies ModelChunk;
+      this.report(judgment, request, view, mustBuffer, remedyApplied);
+      return;
+    }
+
     if (mustBuffer) {
-      // `revise` is a single regeneration and it happens in the runner, not
-      // here: a provider that re-entered itself would bypass the step
-      // budget, the token cap and the cancellation signal. The gate reports
-      // the verdict; the runner decides whether to spend another step.
-      if (violations.length > 0 && judgment.remedy === 'revise') remedyApplied = 'revise';
       for (const chunk of buffer) yield chunk;
     }
 
@@ -166,6 +210,7 @@ export class GovernedProvider implements ModelProvider {
     view: ConstitutionView,
     buffered: boolean,
     remedyApplied: JudgmentMeta['remedyApplied'],
+    extra: { revisionPrompt?: string } = {},
   ): void {
     try {
       this.deps.onJudgment?.(judgment, {
@@ -175,6 +220,7 @@ export class GovernedProvider implements ModelProvider {
         hash: view.hash,
         buffered,
         remedyApplied,
+        ...extra,
       });
     } catch {
       // Bookkeeping must never take the answer down with it.

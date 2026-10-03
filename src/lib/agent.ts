@@ -173,6 +173,18 @@ export interface ReminderView {
  */
 const reminderListeners = new Set<() => void>();
 
+/**
+ * S6. The agent's own name changed.
+ *
+ * Same four-line publish/subscribe as the reminders, and for the same
+ * reason: two things own a view of this — the Settings field and the
+ * conversation header — and neither can own the other's state. It fires
+ * from both the UI editor and the `persona.name` tool, because a rename
+ * the person typed into the chat has to move the header too, or the
+ * feature looks like it did nothing.
+ */
+const personaListeners = new Set<() => void>();
+
 export interface NotificationView {
   id: string;
   text: string;
@@ -706,6 +718,15 @@ export const agent = {
 
   remindersChanged(): void {
     for (const listener of reminderListeners) listener();
+  },
+
+  onPersonaChanged(listener: () => void): () => void {
+    personaListeners.add(listener);
+    return () => personaListeners.delete(listener);
+  },
+
+  personaChanged(): void {
+    for (const listener of personaListeners) listener();
   },
 
   async notifications(): Promise<{ notifications: NotificationView[] }> {

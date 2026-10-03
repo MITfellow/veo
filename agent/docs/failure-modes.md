@@ -231,3 +231,34 @@ the thing that went wrong.
   writing (decision 039). The same failure one layer in — a module built
   and never constructed by the composition root — is covered by the
   layer-by-layer half of the same test.
+
+## A fallback store must never outrank the primary (S6)
+
+`saveToLocal` shrank the account to fit localStorage — stripping attachment
+`src` — and stamped the result with a newer `savedAt` than the intact copy
+in IndexedDB. The next load therefore preferred the damaged one. The shape
+to watch for is not "it deletes data on quota", which was deliberate and
+documented; it is that the **degraded copy wins the freshness comparison**.
+A fallback that can outrank the primary is not a fallback.
+
+It stayed invisible for as long as nothing dirtied the store while a large
+account was loaded. Adding one boot-time state change was enough to expose
+it, which is the general lesson: a latent destructive path is found by
+whatever innocuous change first satisfies its precondition, and that change
+is not the bug.
+
+## Do not mirror another component's state into the persisted account (S6)
+
+The agent's name belongs to the agent, in its database. Copying it into the
+browser's contact card gave two owners for one value and made every boot
+write to storage. Derive it at read time instead; a `useMemo` over the
+contact directory costs nothing and cannot race.
+
+## `use_count` drift in an old database is residue, not a live bug (S6)
+
+`POST /backup/verify` can report differing projections on a long-lived
+development database because `facts.use_count` was once a direct `UPDATE`
+rather than a `memory.used` event. Those pre-fix increments exist nowhere
+in the log, so a rebuild correctly produces a lower number. A fresh
+database verifies clean. Check the event count for the fact before
+treating it as a new defect.

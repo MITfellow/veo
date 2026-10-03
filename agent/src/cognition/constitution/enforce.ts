@@ -122,6 +122,28 @@ export function blockMessageFor(doc: Constitution, violations: readonly ArticleV
   );
 }
 
+/**
+ * What the user is told when the rewrite did not clear the article.
+ *
+ * Decision 042: a second violation is disclosed rather than hidden or
+ * escalated to a refusal. The article's author chose `revise` over
+ * `block`, and those are different severities — but shipping the text
+ * without saying anything is the bug that decision exists to fix.
+ */
+export function revisionFailedNoteFor(
+  doc: Constitution,
+  violations: readonly ArticleVerdict[],
+): string {
+  const first = violations[0];
+  const article = first ? doc.live.find((a) => a.id === first.articleId) : undefined;
+  return (
+    `\n\n(I rewrote that once because it conflicted with ${first?.articleId ?? 'one of my articles'}` +
+    `${article === undefined ? '' : `: "${article.text}"`}, and the rewrite still ` +
+    `${first?.detail ?? 'conflicts'}. You are reading it anyway rather than nothing at all, ` +
+    `but I did not manage to fix it.)`
+  );
+}
+
 /** The instruction handed back to the model for a single `revise` attempt. */
 export function revisionPromptFor(
   doc: Constitution,

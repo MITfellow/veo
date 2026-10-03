@@ -31,6 +31,7 @@ import { unitConvert } from './unit-convert.js';
 import { makeConversationSearch, type SearchToolDeps } from './conversation-search.js';
 import { makeVaultList } from './vault-list.js';
 import { memoryTools, type MemoryToolDeps } from './memory.js';
+import { personaName, type PersonaToolDeps } from './persona-name.js';
 
 export interface BuiltinDeps {
   vault?: Vault;
@@ -42,6 +43,8 @@ export interface BuiltinDeps {
   /** S3's reminders, which need the task and calendar stores to check owners. */
   reminders?: ReminderToolDeps;
   conversations?: SearchToolDeps;
+  /** S6's `persona.name`, which needs the live persona store. */
+  persona?: PersonaToolDeps;
 }
 
 export function registerBuiltins(registry: ToolRegistry, deps: BuiltinDeps = {}): ToolRegistry {
@@ -66,6 +69,7 @@ export function registerBuiltins(registry: ToolRegistry, deps: BuiltinDeps = {})
   if (deps.conversations !== undefined) {
     registry.register(makeConversationSearch(deps.conversations));
   }
+  if (deps.persona !== undefined) registry.register(personaName(deps.persona));
   if (deps.vault !== undefined) registry.register(makeVaultList(deps.vault));
   if (deps.memory !== undefined) {
     for (const tool of memoryTools(deps.memory)) registry.register(tool);
@@ -88,4 +92,5 @@ export {
   makeConversationSearch,
   makeVaultList,
   memoryTools,
+  personaName,
 };

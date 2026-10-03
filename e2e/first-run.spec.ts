@@ -12,7 +12,10 @@ test('a fresh install has no conversations and no messages', async ({ page }) =>
   // invented history, not an app with nothing in it.
   await expect(page.locator('.pinned-item')).toHaveCount(0);
   await expect(page.locator('.conv-row')).toHaveCount(1);
-  await expect(page.locator('.conv-row')).toContainText('Agent');
+  // The agent's row by its role, not by its name: the name is settable
+  // (decision 043) and this assertion is about the row existing on a
+  // fresh install, not about what it happens to be called.
+  await expect(page.locator('.conv-row.conv-agent')).toHaveCount(1);
   await expect(page.locator('.bubble')).toHaveCount(0);
   await expect(page.getByText('No Conversations')).toBeVisible();
   // Read the persisted envelope, not React state — but wait for the

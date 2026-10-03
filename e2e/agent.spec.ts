@@ -17,7 +17,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 async function openAgent(page: import('@playwright/test').Page) {
-  await page.locator('.conv-row', { hasText: 'Agent' }).click();
+  await page.locator('.conv-agent').click();
   await expect(page.locator('.field textarea').first()).toBeVisible();
 }
 

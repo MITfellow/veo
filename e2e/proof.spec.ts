@@ -48,6 +48,32 @@ test('the agent\'s voice is editable and the model is shown what you set', async
   await expect(page.locator('.prf-input').first()).toHaveValue('Ada');
 });
 
+test('naming the agent renames the conversation it is having with you', async ({
+  page,
+  isMobile,
+}) => {
+  // S6. The complaint that started this was that naming the thing
+  // appeared to do nothing — so the name has to show up where a person
+  // actually looks, not only in the field they typed it into.
+  await openSettings(page, isMobile);
+  await page.locator('.prf-input').first().fill('Jacky');
+  await page.waitForTimeout(600);
+  await page.keyboard.press('Escape');
+
+  const row = page.locator('.conv-agent');
+  await expect(row).toContainText('Jacky', { timeout: 10_000 });
+
+  // And it is still the agent's row, not a new contact: the identity is
+  // the `agent` flag, which is why the locator above is not a name.
+  await expect(page.locator('.conv-agent')).toHaveCount(1);
+
+  // Put it back, because the database is shared across specs and a
+  // leftover name is how the next spec fails for an unrelated reason.
+  await openSettings(page, isMobile);
+  await page.locator('.prf-input').first().fill('Ada');
+  await page.waitForTimeout(600);
+});
+
 test('the numbers come from the log and carry their budgets', async ({ page, isMobile }) => {
   await openSettings(page, isMobile);
 

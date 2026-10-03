@@ -86,6 +86,42 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   // real store once it has loaded. `booted` gates persistence: writing before
   // the load resolves would stamp the seed over the user's account.
   const [state, dispatch] = useReducer(reducer, undefined, buildSeedStore);
+
+  /**
+   * The agent's own name (S6), held here and merged into the contact
+   * directory below — deliberately **not** dispatched into the store.
+   *
+   * The persona belongs to the agent, which owns it in its own
+   * database. Writing it into the browser's persisted account would
+   * duplicate the source of truth, and it also made every boot dirty
+   * the store, which was enough for a save of stale React state to
+   * land on top of a write made behind React's back. A derived name
+   * costs one merge and cannot do that.
+   */
+  const [agentName, setAgentName] = useState('');
+
+  const contacts = useMemo(() => {
+    const card = state.contacts[AGENT_CONTACT.id];
+    if (agentName === '' || card === undefined || card.name === agentName) return state.contacts;
+    return {
+      ...state.contacts,
+      [AGENT_CONTACT.id]: {
+        ...card,
+        name: agentName,
+        initials: agentName
+          .split(/\s+/)
+          .slice(0, 2)
+          .map((word) => word[0]?.toUpperCase() ?? '')
+          .join(''),
+      },
+    };
+  }, [state.contacts, agentName]);
+
+  /** What the UI reads: the saved account with that one name laid over it. */
+  const viewState = useMemo(
+    () => (contacts === state.contacts ? state : { ...state, contacts }),
+    [state, contacts],
+  );
   const [booted, setBooted] = useState(false);
   const bootedRef = useRef(false);
   const stateRef = useRef(state);
@@ -253,7 +289,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       if (!bootedRef.current) return;
       if (savedRef.current === stateRef.current) return;
       if (storageChangedElsewhere()) return;
-      saveToLocal(stateRef.current);
+      // The escape hatch never shrinks: IndexedDB already holds the
+      // whole account, and a lossy localStorage copy with a newer
+      // timestamp would win the next load. See `SaveToLocalOptions`.
+      saveToLocal(stateRef.current, Date.now(), { shrinkOnQuota: false });
       savedRef.current = stateRef.current;
     };
     const onHide = () => {
@@ -266,6 +305,40 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       document.removeEventListener('visibilitychange', onHide);
     };
   }, []);
+
+  /**
+   * S6: the agent's contact card follows the name it was given.
+   *
+   * Held in React state and merged in below — deliberately **not**
+   * dispatched into the store. The persona belongs to the agent, which
+   * owns it in its own database; writing it into the browser's
+   * persisted account would duplicate the source of truth, and it also
+   * made every boot dirty the store, which is enough to make a save of
+   * stale state land on top of a write that happened behind React's
+   * back. A derived display name costs one merge and cannot do that.
+   */
+  useEffect(() => {
+    if (!booted) return;
+    let live = true;
+
+    const sync = () => {
+      agent
+        .persona()
+        .then(({ persona: voice }) => {
+          if (live) setAgentName(voice.agentName.trim());
+        })
+        // An agent that is not running is not an error here: the header
+        // keeps the default and the next sync fixes it.
+        .catch(() => undefined);
+    };
+
+    sync();
+    const off = agent.onPersonaChanged(sync);
+    return () => {
+      live = false;
+      off();
+    };
+  }, [booted]);
 
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
 
@@ -299,8 +372,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   );
 
   const chatContacts = useCallback(
-    (chat: Chat) => chat.participantIds.map((id) => state.contacts[id]).filter(Boolean),
-    [state.contacts],
+    (chat: Chat) => chat.participantIds.map((id) => contacts[id]).filter(Boolean),
+    [contacts],
   );
 
   const chatTitle = useCallback(
@@ -398,6 +471,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
             dispatch({ type: 'stream', id: bubble, text: painted });
           },
           onTool: (tool) => {
+            // S6: `persona.name` renames the agent mid-run. Announcing it
+            // here rather than waiting for the next reload is the
+            // difference between the header changing while you watch and
+            // the rename looking like it did nothing.
+            if (tool === 'persona.name') agent.personaChanged();
             dispatch({ type: 'typing', chatId, typing: true, by: AGENT_CONTACT.id });
             if (!opened) return;
             dispatch({ type: 'stream', id: bubble, text: `${painted}\n\n· using ${tool}…` });
@@ -682,7 +760,10 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   );
 
   const value: Ctx = {
-    state,
+    // The derived one: everything the UI renders sees the agent's chosen
+    // name. Persistence above deliberately keeps using the raw reducer
+    // state, so the name never enters the saved account.
+    state: viewState,
     booted,
     dispatch,
     activeChat,

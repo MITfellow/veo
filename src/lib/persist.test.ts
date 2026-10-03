@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearState, loadState, saveState, saveToLocal, STORAGE_KEY } from './persist';
 import { idbGet, resetDbForTests } from './db';
 import { buildDemoStore } from '../test/demo-world';
@@ -79,6 +79,52 @@ describe('IndexedDB is the home of record', () => {
     await new Promise((r) => setTimeout(r, 10));
     const env = (await idbGet(STATE_KEY_FOR_TEST)) as { state: { chats: { draft: string }[] } };
     expect(env.state.chats[0].draft).toBe('written before the migration');
+  });
+
+  it('the page-hide escape hatch writes nothing rather than a copy with the photos gone', async () => {
+    // The destructive version of this is subtle: `shrink()` strips the
+    // attachments, and the envelope it writes is *newer* than the intact
+    // one in IndexedDB — so the next load prefers it and the photos are
+    // gone for good. A fallback that outranks the primary is not a
+    // fallback. Latent until something dirtied a large account's state;
+    // a boot-time rename was the first thing that did.
+    const intact = buildDemoStore();
+    intact.chats[0].draft = 'the whole account';
+    await saveState(intact);
+
+    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      // A real DOMException, because `isQuotaError` checks the type and a
+      // plain Error would be read as "localStorage is broken" instead.
+      throw new DOMException('quota', 'QuotaExceededError');
+    });
+    const result = saveToLocal(intact, Date.now() + 5_000, { shrinkOnQuota: false });
+    spy.mockRestore();
+
+    expect(result).toEqual({ ok: false, reason: 'quota' });
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+    // and the database copy is still the one that loads
+    expect((await loadState()).chats[0].draft).toBe('the whole account');
+  });
+
+  it('still shrinks when localStorage is genuinely the only store there is', () => {
+    const big = buildDemoStore();
+    let attempts = 0;
+    const real = Storage.prototype.setItem;
+    const spy = vi
+      .spyOn(Storage.prototype, 'setItem')
+      .mockImplementation(function (this: Storage, key: string, value: string) {
+        attempts += 1;
+        if (attempts === 1) throw new DOMException('quota', 'QuotaExceededError');
+        real.call(this, key, value);
+      });
+    const result = saveToLocal(big, Date.now());
+    spy.mockRestore();
+
+    // Two attempts: the full one, then the shrunken one. Losing photos
+    // beats losing the account when there is nowhere else to put it.
+    expect(attempts).toBe(2);
+    expect(result).toEqual({ ok: false, reason: 'quota' });
+    expect(localStorage.getItem(STORAGE_KEY)).toBeTruthy();
   });
 
   it('prefers whichever copy is newer', async () => {

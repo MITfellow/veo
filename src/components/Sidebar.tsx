@@ -78,7 +78,14 @@ const ConvRow = React.memo(function ConvRow({
 
   return (
     <div
-      className={`conv-row ${selected ? 'selected' : ''} ${chat.unread ? 'unread' : ''}`}
+      // `conv-agent` marks the one conversation that is the product rather
+      // than a contact. It exists because the agent's *name* is now
+      // user-settable (decision 043), so anything that found this row by
+      // the word "Agent" started failing the moment someone renamed it —
+      // which is exactly what the feature is for.
+      className={`conv-row ${isAgentChat(chat, contacts) ? 'conv-agent' : ''} ${
+        selected ? 'selected' : ''
+      } ${chat.unread ? 'unread' : ''}`}
       role="option"
       tabIndex={0}
       aria-selected={selected}

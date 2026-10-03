@@ -99,6 +99,9 @@ export default function ProofPanel({ onNotice }: { onNotice: (message: string) =
     try {
       const saved = await agent.savePersona(next);
       setRendered(saved.rendered);
+      // The conversation header shows this name too, and it is not a
+      // child of this panel.
+      agent.personaChanged();
     } catch (cause) {
       onNotice((cause as Error).message);
     }
