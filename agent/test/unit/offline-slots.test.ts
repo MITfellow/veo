@@ -165,6 +165,79 @@ describe('the offline provider fills arguments from the schema', () => {
   });
 });
 
+describe('the offline provider fills the real schemas, not fixtures', () => {
+  // These three come from running the app and asking it a question
+  // the unit tests all passed. The fixtures were too kind: long
+  // unambiguous enum members, one string slot, no aliases.
+
+  it('matches enum members on whole words, not substrings', async () => {
+    // A unit list contains "m", "in", "t" and "l". Substring matching
+    // put "m" into `from` for almost any sentence.
+    const call = await callFor('how many miles is 42 kilometres', [
+      {
+        name: 'unit.convert',
+        description: 'Convert a quantity between units.',
+        parameters: {
+          type: 'object',
+          properties: {
+            value: { type: 'number' },
+            from: { type: 'string', enum: ['m', 'in', 't', 'l', 'kilometres', 'miles'] },
+            to: { type: 'string', enum: ['m', 'in', 't', 'l', 'kilometres', 'miles'] },
+          },
+          required: ['value', 'from', 'to'],
+        },
+        ...safe,
+      },
+    ]);
+    expect(call?.input.from).not.toBe('m');
+    expect(call?.input.to).not.toBe('m');
+  });
+
+  it('fills two enum slots in the order the question mentions them', async () => {
+    const call = await callFor('convert 42 kilometres into miles', [
+      {
+        name: 'unit.convert',
+        description: 'Convert a quantity between units.',
+        parameters: {
+          type: 'object',
+          properties: {
+            value: { type: 'number' },
+            from: { type: 'string', enum: ['miles', 'kilometres'] },
+            to: { type: 'string', enum: ['miles', 'kilometres'] },
+          },
+          required: ['value', 'from', 'to'],
+        },
+        ...safe,
+      },
+    ]);
+    // Note the enum lists 'miles' first; question order must win, and
+    // the same unit must not be used for both ends.
+    expect(call?.input).toEqual({ value: 42, from: 'kilometres', to: 'miles' });
+  });
+
+  it('refuses to fill two free-text slots with the same blob', async () => {
+    // What actually happened: `from` and `to` both received the string
+    // "convert kilometres miles".
+    const call = await callFor('convert 42 kilometres into miles', [
+      {
+        name: 'unit.convert',
+        description: 'Convert a quantity between units.',
+        parameters: {
+          type: 'object',
+          properties: {
+            value: { type: 'number' },
+            from: { type: 'string' },
+            to: { type: 'string' },
+          },
+          required: ['value', 'from', 'to'],
+        },
+        ...safe,
+      },
+    ]);
+    expect(call).toBeUndefined();
+  });
+});
+
 describe('the offline provider stays name-blind', () => {
   it('contains no literal tool name anywhere in its source', async () => {
     // Invariant 9: the registry is the only place tool names live. This

@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import { convert, UnitError, unitConvert } from '../../src/tools/unit-convert.js';
 import type { ToolContext } from '../../src/capability/tool.js';
+import { jsonSchemaOf } from '../../src/capability/schema-json.js';
 
 const ctx = null as unknown as ToolContext; // pure: touches nothing
 
@@ -129,5 +130,39 @@ describe('unit.convert reports itself honestly', () => {
     expect(unitConvert.risk).toBe('safe');
     expect(unitConvert.capabilities).toEqual([]);
     expect(unitConvert.minTrust).toBe('FOREIGN');
+  });
+});
+
+/**
+ * S3: found by running the app, not by a test.
+ *
+ * "convert 42 kilometres into miles" came back "'convert kilometres
+ * miles' is not a unit I know" — two bugs in one answer. The second
+ * was that `kilometres` was not a unit the tool knew at all, which
+ * would have failed with a real model too.
+ */
+describe('the units people actually type', () => {
+  it('knows the spelled-out forms, not only the symbols', () => {
+    expect(convert(42, 'kilometres', 'miles').value).toBeCloseTo(26.0976, 3);
+    expect(convert(1, 'kilometre', 'metres').value).toBe(1000);
+    expect(convert(2, 'kilograms', 'pounds').value).toBeCloseTo(4.4092, 3);
+    expect(convert(100, 'centimeters', 'meter').value).toBe(1);
+    expect(convert(5, 'millimetres', 'cm').value).toBe(0.5);
+    expect(convert(3, 'kilos', 'g').value).toBe(3000);
+  });
+
+  it('offers the whole closed set in its schema', () => {
+    // §36: the schema is the single definition. A caller should not
+    // have to guess the vocabulary from two examples in a sentence.
+    const schema = jsonSchemaOf(unitConvert.input) as {
+      properties?: Record<string, { enum?: string[] }>;
+    };
+    const from = schema.properties?.['from']?.enum ?? [];
+    expect(from).toContain('kilometres');
+    expect(from).toContain('celsius');
+    expect(from).toContain('fahrenheit');
+    expect(from.length).toBeGreaterThan(50);
+    // And it is derived from the table, not a second copy of it.
+    expect(from).toEqual(schema.properties?.['to']?.enum);
   });
 });

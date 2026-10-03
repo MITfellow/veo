@@ -155,9 +155,10 @@ function meaningful(text: string): Set<string> {
 /**
  * Only `safe` tools, and only `pure`/`local` ones.
  *
- * This provider guesses. It matched "hello there" to `calendar.cancel`
- * — because the word "there" appears in that tool's description — and
- * raised a dangerous approval against an invented id. That is not a
+ * This provider guesses. It matched "hello there" to the tool that
+ * cancels a calendar entry — because the word "there" appears in that
+ * tool's description — and raised a dangerous approval against an
+ * invented id. That is not a
  * scoring bug to be tuned away; it is the whole category. Something
  * that cannot understand the question must not be trusted to decide a
  * write, and no amount of threshold-fiddling makes a word-overlap
@@ -187,13 +188,31 @@ const isType = (slot: Slot, want: string): boolean =>
  * abandons the whole call. A half-filled call fails zod validation and
  * the person reads the resulting tool error as a crash, which is a
  * worse answer than "I cannot do that without a model".
+ *
+ * `taken` is the values already used by earlier slots on this same
+ * call. Without it, "convert 42 kilometres into miles" fills both
+ * `from` and `to` with whichever unit the enum happens to list first.
  */
-function fillSlot(slot: Slot, asked: string): unknown {
+function fillSlot(
+  slot: Slot,
+  asked: string,
+  options: { taken: ReadonlySet<unknown>; soleStringSlot: boolean },
+): unknown {
   if (Array.isArray(slot.enum) && slot.enum.length > 0) {
-    const hit = slot.enum.find(
-      (option) => typeof option === 'string' && asked.includes(option.toLowerCase()),
-    );
-    return hit;
+    // Whole words only. A substring test is catastrophic here: a unit
+    // list contains "m", "in", "t" and "l", and `asked.includes('m')`
+    // is true of almost every English sentence. Found by running the
+    // app, not by a test — my fixture used long unit names.
+    const mentions: Array<{ option: unknown; at: number }> = [];
+    for (const option of slot.enum) {
+      if (typeof option !== 'string') continue;
+      const at = asked.search(new RegExp(`\\b${escapeRegex(option.toLowerCase())}\\b`));
+      if (at >= 0) mentions.push({ option, at });
+    }
+    // Earliest mention first, so slots declared in order take the
+    // units named in order: from = kilometres, to = miles.
+    mentions.sort((a, b) => a.at - b.at);
+    return mentions.find((mention) => !options.taken.has(mention.option))?.option;
   }
 
   if (isType(slot, 'number') || isType(slot, 'integer')) {
@@ -209,15 +228,22 @@ function fillSlot(slot: Slot, asked: string): unknown {
     const quoted = asked.match(/["\u201c']([^"\u201d']{2,})["\u201d']/);
     if (quoted?.[1] !== undefined) return quoted[1];
 
-    // Otherwise the question's own content words. Good enough for a
-    // search query, which is the common case; wrong for a title, which
-    // is why writing tools stay behind an approval.
+    // Otherwise the question's own content words — but only if this is
+    // the *only* free-text argument. With two, there is no way to tell
+    // which words belong to which, and filling both with the same blob
+    // is never right: it is how the unit conversion tool was once
+    // asked to convert "convert kilometres miles" into "convert
+    // kilometres miles".
+    if (!options.soleStringSlot) return undefined;
     const words = [...meaningful(asked)];
     return words.length === 0 ? undefined : words.join(' ');
   }
 
   return undefined;
 }
+
+/** Escape a schema-supplied string before it goes into a RegExp. */
+const escapeRegex = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 function bestTool(
   request: ModelRequest,
@@ -252,16 +278,30 @@ function bestTool(
     // answer to everything.
     const score = hits / Math.sqrt(own.size || 1);
 
+    // How many required arguments are free text? One can be inferred
+    // from the question; two cannot be told apart.
+    const freeTextSlots = required.filter((name) => {
+      const slot = properties[name];
+      return (
+        slot !== undefined && isType(slot, 'string') && !Array.isArray(slot.enum)
+      );
+    }).length;
+
     const input: Record<string, unknown> = {};
+    const taken = new Set<unknown>();
     let fillable = true;
     for (const name of required) {
       const slot = properties[name];
-      const value = slot === undefined ? undefined : fillSlot(slot, asked);
+      const value =
+        slot === undefined
+          ? undefined
+          : fillSlot(slot, asked, { taken, soleStringSlot: freeTextSlots === 1 });
       if (value === undefined) {
         fillable = false;
         break;
       }
       input[name] = value;
+      taken.add(value);
     }
     if (!fillable) continue;
 

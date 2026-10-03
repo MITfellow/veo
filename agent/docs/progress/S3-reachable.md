@@ -143,7 +143,7 @@ are separate controls on purpose.
 
 | | before S3 | after |
 |---|---|---|
-| agent tests / files | 947 / 87 | **992 / 90** |
+| agent tests / files | 947 / 87 | **997 / 90** |
 | web tests / files | 159 / 15 | 159 / 15 |
 | e2e | 151 passed / 13 skipped | **155 / 13** |
 | tools | 23 | **27** |
@@ -153,6 +153,49 @@ are separate controls on purpose.
 `tsc` clean in both projects, oxlint 0/0. The agent suite is 64s
 against a 60s budget; it has been over since the harness-UI milestone
 and the answer is still not to delete tests.
+
+## Found by running it
+
+The suite was green and the feature was still half broken. Asking the
+running app *"convert 42 kilometres into miles"* returned:
+
+> 'convert kilometres miles' is not a unit I know
+
+Three bugs in one sentence, none of which any test caught, because my
+fixtures were kinder than reality:
+
+1. **`kilometres` was not a unit the tool knew.** Only `km`. That
+   would have failed with a real model too — nobody types "km" when
+   they are talking to a person. Added the spelled-out forms for
+   length and mass.
+2. **Both string slots got the same blob.** `from` and `to` were each
+   filled with the question's content words. The provider now refuses
+   to infer a free-text slot unless it is the *only* one: with two
+   there is no way to tell which words belong to which, and filling
+   both identically is never right.
+3. **Enum matching was a substring test.** Once the units were exposed
+   as an enum, `asked.includes('m')` matched almost every English
+   sentence — a unit list contains `m`, `in`, `t` and `l`. It is now a
+   word-boundary match, and multi-slot enums are filled in the order
+   the question mentions them, each value used once, so
+   `from = kilometres, to = miles` rather than both taking whichever
+   the schema happened to list first.
+
+`unit.convert`'s `from`/`to` are now `z.enum(...)` derived from the
+unit table rather than `z.string()`. The set was always closed —
+`convert` rejects anything else — so the schema was hiding true
+information, and §36 calls the schema the single definition. Derived
+from the table, not written out again, with a test that the two lists
+cannot drift.
+
+Three new provider tests and two new unit tests pin all of it. The
+invariant-9 guard in `plugin.test.ts` then caught my *comment* naming
+`unit.convert` inside the provider — stricter than my own new test,
+which strips comments — so I reworded the comment rather than loosen
+the older check.
+
+Afterwards, live: `convert 42 kilometres into miles` → **26.097590074
+mi**; `hello there` → the honest no-model answer with no tool call.
 
 ## Deferred
 

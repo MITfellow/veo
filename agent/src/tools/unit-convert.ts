@@ -31,6 +31,25 @@ const UNITS: Record<string, UnitDef> = {
   cm: { dimension: 'length', factor: 0.01, label: 'cm' },
   m: { dimension: 'length', factor: 1, label: 'm' },
   km: { dimension: 'length', factor: 1000, label: 'km' },
+  // The spelled-out forms. "convert 42 kilometres into miles" was
+  // answered with "not a unit I know" until S3 ran the app and asked
+  // it — nobody types "km" when they are talking to a person.
+  metre: { dimension: 'length', factor: 1, label: 'm' },
+  metres: { dimension: 'length', factor: 1, label: 'm' },
+  meter: { dimension: 'length', factor: 1, label: 'm' },
+  meters: { dimension: 'length', factor: 1, label: 'm' },
+  kilometre: { dimension: 'length', factor: 1000, label: 'km' },
+  kilometres: { dimension: 'length', factor: 1000, label: 'km' },
+  kilometer: { dimension: 'length', factor: 1000, label: 'km' },
+  kilometers: { dimension: 'length', factor: 1000, label: 'km' },
+  centimetre: { dimension: 'length', factor: 0.01, label: 'cm' },
+  centimetres: { dimension: 'length', factor: 0.01, label: 'cm' },
+  centimeter: { dimension: 'length', factor: 0.01, label: 'cm' },
+  centimeters: { dimension: 'length', factor: 0.01, label: 'cm' },
+  millimetre: { dimension: 'length', factor: 0.001, label: 'mm' },
+  millimetres: { dimension: 'length', factor: 0.001, label: 'mm' },
+  millimeter: { dimension: 'length', factor: 0.001, label: 'mm' },
+  millimeters: { dimension: 'length', factor: 0.001, label: 'mm' },
   in: { dimension: 'length', factor: 0.0254, label: 'in' },
   inch: { dimension: 'length', factor: 0.0254, label: 'in' },
   inches: { dimension: 'length', factor: 0.0254, label: 'in' },
@@ -50,6 +69,10 @@ const UNITS: Record<string, UnitDef> = {
   gram: { dimension: 'mass', factor: 0.001, label: 'g' },
   grams: { dimension: 'mass', factor: 0.001, label: 'g' },
   kg: { dimension: 'mass', factor: 1, label: 'kg' },
+  kilogram: { dimension: 'mass', factor: 1, label: 'kg' },
+  kilograms: { dimension: 'mass', factor: 1, label: 'kg' },
+  kilo: { dimension: 'mass', factor: 1, label: 'kg' },
+  kilos: { dimension: 'mass', factor: 1, label: 'kg' },
   t: { dimension: 'mass', factor: 1000, label: 't' },
   oz: { dimension: 'mass', factor: 0.028349523125, label: 'oz' },
   ounce: { dimension: 'mass', factor: 0.028349523125, label: 'oz' },
@@ -219,10 +242,27 @@ export function convert(value: number, fromUnit: string, toUnit: string): {
   };
 }
 
+/**
+ * The units, in the schema rather than only in the prose.
+ *
+ * §36 calls the schema the single definition of a tool's arguments,
+ * and this set is genuinely closed — `convert` rejects anything not in
+ * `UNITS`. Leaving it out of the schema meant a caller had to guess
+ * from two examples in a description, which is how the offline
+ * provider ended up passing the string "convert kilometres miles" as
+ * a unit. A model gets the same benefit.
+ *
+ * Derived from `UNITS` rather than written out again: a second list
+ * would drift from the first the moment anyone adds a unit.
+ */
+const UNIT_NAMES = Object.keys(UNITS) as [string, ...string[]];
+
 const Input = z.object({
   value: z.number().finite(),
-  from: z.string().min(1).max(32).describe('The unit to convert from, e.g. "oz", "°F", "GiB".'),
-  to: z.string().min(1).max(32).describe('The unit to convert to, e.g. "g", "°C", "MiB".'),
+  from: z
+    .enum(UNIT_NAMES)
+    .describe('The unit to convert from, e.g. "oz", "°F", "GiB", "kilometres".'),
+  to: z.enum(UNIT_NAMES).describe('The unit to convert to, e.g. "g", "°C", "MiB", "miles".'),
 });
 
 const Output = z.object({
