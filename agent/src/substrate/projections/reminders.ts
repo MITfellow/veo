@@ -1,5 +1,5 @@
 /**
- * The reminder projection (S3).
+ * The reminder projection (S3, extended in S4).
  *
  * Four events, one table. Nothing here generates an id, reads a clock
  * or decides anything: the row is a flattening of what the log already
@@ -15,8 +15,9 @@ import type { PayloadOf } from '../events/types.js';
 
 export const remindersProjector: Projector = {
   name: 'reminders',
-  version: 1,
-  handles: ['reminder.set', 'reminder.cancelled', 'reminder.fired'],
+  // Version 2: `reminder.seen` (S4).
+  version: 2,
+  handles: ['reminder.set', 'reminder.cancelled', 'reminder.fired', 'reminder.seen'],
 
   reset(storage) {
     storage.exec('DELETE FROM reminders');
@@ -59,6 +60,14 @@ export const remindersProjector: Projector = {
         // A cancelled reminder that somehow fires is recorded as fired
         // anyway — the log says what happened, not what should have.
         storage.run('UPDATE reminders SET fired_at = ? WHERE id = ? AND fired_at IS NULL', [
+          e.ts,
+          p.reminderId,
+        ]);
+        return;
+      }
+      case 'reminder.seen': {
+        const p = e.payload as PayloadOf<'reminder.seen'>;
+        storage.run('UPDATE reminders SET seen_at = ? WHERE id = ? AND seen_at IS NULL', [
           e.ts,
           p.reminderId,
         ]);

@@ -498,6 +498,14 @@ const ReminderSet = z.object({
 });
 const ReminderCancelled = z.object({ reminderId: z.string(), reason: z.string() });
 const ReminderFired = z.object({ reminderId: z.string() });
+/**
+ * S4. Appended when the person actually looks at a fired reminder.
+ *
+ * "I was told and I saw it" and "I was told and never looked" are
+ * different facts, and the second is the one that says the reminder
+ * system is not working.
+ */
+const ReminderSeen = z.object({ reminderId: z.string() });
 
 const ScheduleCreated = z.object({
   scheduleId: z.string(),
@@ -739,6 +747,7 @@ export const EVENT_SCHEMAS = {
   'reminder.set': ReminderSet,
   'reminder.cancelled': ReminderCancelled,
   'reminder.fired': ReminderFired,
+  'reminder.seen': ReminderSeen,
 
   'schedule.created': ScheduleCreated,
   'schedule.updated': ScheduleUpdated,

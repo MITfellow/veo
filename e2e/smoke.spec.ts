@@ -49,7 +49,11 @@ test('a tapback can be added from the hover menu', async ({ page, isMobile }) =>
 
 test('settings persist across a reload', async ({ page }) => {
   await page.goto('/');
-  await page.locator('.sidebar-top .icon-btn').first().click();
+  // Named, not positional. `.icon-btn').first()` was right only by
+  // accident: S4 added a notification bell to the same row, and when
+  // one is outstanding the first icon button is no longer Settings.
+  // Fourth time this exact shape has broken a test here.
+  await page.getByRole('button', { name: 'Settings' }).click();
   await page.getByText('Dark', { exact: true }).click();
   await page.getByRole('button', { name: 'Done' }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');

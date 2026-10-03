@@ -72,7 +72,11 @@ test('Reset Data empties the app again', async ({ page, isMobile }) => {
     await page.locator('.back-btn').click();
     await page.waitForTimeout(300);
   }
-  await page.locator('.sidebar-top .icon-btn').first().click();
+  // Named, not positional. `.icon-btn').first()` was right only by
+  // accident: S4 added a notification bell to the same row, and when
+  // one is outstanding the first icon button is no longer Settings.
+  // Fourth time this exact shape has broken a test here.
+  await page.getByRole('button', { name: 'Settings' }).click();
   await page.getByRole('button', { name: 'Reset Data' }).click();
   await expect(page.getByText('No Conversations')).toBeVisible();
   await expect(page.locator('.conv-row')).toHaveCount(1);

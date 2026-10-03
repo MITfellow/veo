@@ -4079,6 +4079,9 @@
 
 .cal-row {
   display: flex;
+  /* Wraps so the reminder presets sit under their own row, with the
+     event they belong to still visible. */
+  flex-wrap: wrap;
   align-items: flex-start;
   gap: 10px;
   padding: 9px 11px;
@@ -4979,4 +4982,134 @@
 /* The log is following: a quiet marker, not a flashing one. */
 .evt-live {
   color: var(--ok, #2d9d5f);
+}
+
+/* ───────────────────────── S4: the notification bell ─────────────────────
+   One prefix for the panel (`ntf-`), because reusing another panel's
+   class as a test hook has broken this repo three times. */
+
+.ntf-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.ntf-bell {
+  position: relative;
+  color: var(--blue);
+}
+
+.ntf-badge {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--danger, #d7373f);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.ntf-pop {
+  position: absolute;
+  top: 26px;
+  left: 0;
+  z-index: 40;
+  width: 290px;
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 22%);
+  text-align: left;
+}
+
+.ntf-head {
+  padding: 2px 4px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-dim, #8a8a8e);
+}
+
+.ntf-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 4px;
+  border-top: 1px solid var(--hairline);
+}
+
+.ntf-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.ntf-text {
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ntf-when {
+  font-size: 11px;
+  color: var(--text-dim, #8a8a8e);
+}
+
+.ntf-btn {
+  padding: 4px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ntf-btn.is-primary {
+  border-color: transparent;
+  background: var(--accent, #0b84ff);
+  color: #fff;
+}
+
+.ntf-foot {
+  padding: 8px 4px 2px;
+  border-top: 1px solid var(--hairline);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-dim, #8a8a8e);
+}
+
+/* S4: the reminder presets under a calendar row. */
+.cal-remind {
+  flex: 0 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--hairline);
+}
+
+.cal-btn.is-set {
+  border-color: var(--accent, #0b84ff);
+  color: var(--accent, #0b84ff);
+}
+
+.cal-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }

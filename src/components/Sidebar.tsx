@@ -7,6 +7,7 @@ import { listStamp } from '../lib/time';
 import { ChatAvatar } from './Avatar';
 import { Floating } from './Floating';
 import { IconFilter, IconGear, IconMuted, IconPin, IconSearch, IconX } from './Icons';
+import NotificationBell from './NotificationBell';
 
 /** wraps every occurrence of the needle in <mark> */
 function highlight(text: string, needle: string) {
@@ -243,6 +244,10 @@ export function Sidebar({
             <span className="tl-green" />
           </div>
           <div className="title-actions">
+            {/* S4: fired reminders nobody has looked at. Renders
+                nothing at all when there are none, and when the agent
+                is not running. */}
+            <NotificationBell />
             <button className="icon-btn" onClick={onSettings} title="Settings" aria-label="Settings">
               <IconGear size={15} />
             </button>

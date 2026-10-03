@@ -45,7 +45,7 @@ import { TaskStore } from './cognition/tasks/store.js';
 import { MessageSearch } from './cognition/search/messages.js';
 import { PersonaStore } from './cognition/persona/store.js';
 import { JobQueue } from './orchestration/queue.js';
-import { ScheduleStore, SCHEDULED_RUN } from './orchestration/schedule.js';
+import { ScheduleStore, SCHEDULED_RUN, scheduleSessionId } from './orchestration/schedule.js';
 import { ReminderStore } from './cognition/reminders/store.js';
 import { Worker } from './orchestration/worker.js';
 import { Degradation } from './orchestration/degradation.js';
@@ -341,7 +341,7 @@ export async function start(options: StartOptions = {}): Promise<StartedAgent> {
 
         // One session per schedule, reused, so a recurring briefing reads
         // as a continuing thread rather than a pile of orphan sessions.
-        const sessionId = `ses-schedule-${scheduleId}`;
+        const sessionId = scheduleSessionId(scheduleId);
         const existing = storage.get<{ id: string }>('SELECT id FROM sessions WHERE id = ?', [sessionId]);
         if (existing === undefined) {
           events.append({

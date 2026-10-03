@@ -163,6 +163,26 @@ export interface ReminderView {
   firedAt: number | null;
 }
 
+/**
+ * S4. A reminder that has fired and has not been looked at.
+ *
+ * Only reminders, deliberately: the person explicitly asked to be told
+ * this at this moment, and that request is what earns an
+ * interruption. A badge whose first item is something the agent
+ * decided to say is a badge people learn to ignore.
+ */
+const reminderListeners = new Set<() => void>();
+
+export interface NotificationView {
+  id: string;
+  text: string;
+  firedAt: number;
+  ownerKind: 'task' | 'event';
+  ownerId: string;
+  /** Where the agent's own words about it landed. */
+  sessionId: string;
+}
+
 /** S1's calendar. The agent's own — there is no connector behind it. */
 export interface CalendarEventView {
   id: string;
@@ -665,6 +685,35 @@ export const agent = {
 
   async cancelReminder(id: string): Promise<void> {
     await call(`/reminders/${id}`, { method: 'DELETE' });
+  },
+
+  /* ───────────────────────── S4: notifications ────────────────────────── */
+
+  /**
+   * Tell every mounted panel that the reminder list has moved.
+   *
+   * Two panels show reminders — the calendar sets them on events, the
+   * to-do panel lists them all — and without this, setting one in the
+   * calendar leaves a stale list two inches below it. They are
+   * siblings in the same sheet, so neither can own the other's state;
+   * a one-line notification is cheaper and clearer than lifting the
+   * whole list into a context that only these two use.
+   */
+  onRemindersChanged(listener: () => void): () => void {
+    reminderListeners.add(listener);
+    return () => reminderListeners.delete(listener);
+  },
+
+  remindersChanged(): void {
+    for (const listener of reminderListeners) listener();
+  },
+
+  async notifications(): Promise<{ notifications: NotificationView[] }> {
+    return call('/notifications');
+  },
+
+  async markNotificationSeen(id: string): Promise<void> {
+    await call(`/notifications/${id}/seen`, { method: 'POST' });
   },
 
   /* ─────────────────── §28: schedules, jobs, degradation ───────────────── */

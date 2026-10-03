@@ -31,6 +31,8 @@ export interface Reminder {
   createdAt: number;
   cancelledAt: number | null;
   firedAt: number | null;
+  /** S4: when the person actually looked at it, if they have. */
+  seenAt: number | null;
 }
 
 export interface SetReminderInput {
@@ -51,6 +53,7 @@ interface Row {
   created_at: number;
   cancelled_at: number | null;
   fired_at: number | null;
+  seen_at: number | null;
 }
 
 const toReminder = (row: Row): Reminder => ({
@@ -63,6 +66,7 @@ const toReminder = (row: Row): Reminder => ({
   createdAt: row.created_at,
   cancelledAt: row.cancelled_at,
   firedAt: row.fired_at,
+  seenAt: row.seen_at,
 });
 
 /** The job payload a fired reminder hands the worker. */
@@ -176,6 +180,51 @@ export class ReminderStore {
       payload: { reminderId },
     });
     return true;
+  }
+
+  /**
+   * Record that the person looked at it.
+   *
+   * Returns false when there is nothing to mark — unknown, never
+   * fired, or already seen — so a double-click does not append a
+   * second event.
+   */
+  markSeen(principal: string, reminderId: string): boolean {
+    const existing = this.get(principal, reminderId);
+    if (existing === undefined) return false;
+    if (existing.firedAt === null || existing.seenAt !== null) return false;
+
+    this.deps.events.append({
+      type: 'reminder.seen',
+      principal,
+      trust: 'USER',
+      payload: { reminderId },
+    });
+    return true;
+  }
+
+  /**
+   * What the person has been told and has not looked at. Newest first:
+   * this is a notification list, and the most recent interruption is
+   * the one still in their head.
+   *
+   * Cancelled ones are excluded. A reminder called off *after* it
+   * fired is still a thing that happened — `all()` shows it — but it
+   * is not something to badge someone about.
+   */
+  unseen(principal: string, limit = 20): Reminder[] {
+    return this.deps.storage
+      .all<Row>(
+        `SELECT * FROM reminders
+          WHERE principal = ?
+            AND fired_at IS NOT NULL
+            AND seen_at IS NULL
+            AND cancelled_at IS NULL
+          ORDER BY fired_at DESC
+          LIMIT ${Math.min(Math.max(limit, 1), MAX_PENDING)}`,
+        [principal],
+      )
+      .map(toReminder);
   }
 
   get(principal: string, reminderId: string): Reminder | undefined {

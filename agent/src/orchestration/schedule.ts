@@ -28,6 +28,17 @@ export const MAX_CATCH_UP = 10;
 /** The job kind a schedule produces. One kind, so the worker stays small. */
 export const SCHEDULED_RUN = 'scheduled.run';
 
+/**
+ * The session a schedule's runs land in.
+ *
+ * One per schedule, reused, so a recurring briefing reads as a
+ * continuing thread rather than a pile of orphan sessions. Exported
+ * because S4's notifications need to point at the same conversation
+ * the worker wrote into, and a second copy of this string in the
+ * interface layer is a drift waiting to happen.
+ */
+export const scheduleSessionId = (scheduleId: string): string => `ses-schedule-${scheduleId}`;
+
 export interface Schedule {
   id: string;
   name: string;

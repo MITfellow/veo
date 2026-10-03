@@ -113,6 +113,10 @@ export default function TasksPanel({ onNotice }: { onNotice: (message: string) =
     [load, showDone, apply, fail],
   );
 
+  // The calendar panel can set a reminder on an event, and this
+  // panel lists it. Siblings in one sheet, so neither owns the other.
+  useEffect(() => agent.onRemindersChanged(() => void refresh()), [refresh]);
+
   useEffect(() => {
     let live = true;
     load(showDone).then(
@@ -169,6 +173,7 @@ export default function TasksPanel({ onNotice }: { onNotice: (message: string) =
       setRemindFor(null);
       setRemindAt('');
       await refresh();
+      agent.remindersChanged();
       onNotice('Reminder set.');
     } catch (cause) {
       onNotice((cause as Error).message);
@@ -179,6 +184,7 @@ export default function TasksPanel({ onNotice }: { onNotice: (message: string) =
     try {
       await agent.cancelReminder(reminder.id);
       await refresh();
+      agent.remindersChanged();
       onNotice('Reminder called off.');
     } catch (cause) {
       onNotice((cause as Error).message);

@@ -277,3 +277,135 @@ describe('the reminder tools', () => {
     expect(permits('TOOL', 'reminder:set')).toBe(false);
   });
 });
+
+/**
+ * S4 tests 41–48: seen, and the notification query behind the badge.
+ *
+ * S3 could record that a reminder fired. It had no way to record that
+ * anyone looked, which meant the app could not tell "told you and you
+ * ignored it" from "told you while the window was shut and never
+ * mentioned it again". The second is not a reminder at all, and it
+ * was the common case.
+ */
+describe('a fired reminder is something you have to be shown', () => {
+  function fired() {
+    const s = fixture();
+    const task = s.tasks.add(USER, { title: 'Move the car' });
+    const reminder = s.store.set(USER, {
+      ownerKind: 'task',
+      ownerId: task.id,
+      remindAt: at(1),
+      text: 'Move the car',
+    });
+    s.store.markFired(USER, reminder.id);
+    return { s, reminder };
+  }
+
+  it('41. markSeen appends reminder.seen and stamps it', () => {
+    const { s, reminder } = fired();
+    const before = s.events.count();
+
+    expect(s.store.markSeen(USER, reminder.id)).toBe(true);
+    expect(s.events.count()).toBe(before + 1);
+    expect(s.store.get(USER, reminder.id)?.seenAt).not.toBeNull();
+  });
+
+  it('42. marking twice appends once', () => {
+    const { s, reminder } = fired();
+    s.store.markSeen(USER, reminder.id);
+
+    const before = s.events.count();
+    expect(s.store.markSeen(USER, reminder.id)).toBe(false);
+    expect(s.events.count()).toBe(before);
+  });
+
+  it('43. unseen is newest first', () => {
+    const s = fixture();
+    const task = s.tasks.add(USER, { title: 'Several things' });
+    const ids: string[] = [];
+    for (const hour of [1, 2, 3]) {
+      const reminder = s.store.set(USER, {
+        ownerKind: 'task',
+        ownerId: task.id,
+        remindAt: at(hour),
+        text: `Thing ${hour}`,
+      });
+      s.store.markFired(USER, reminder.id);
+      ids.push(reminder.id);
+    }
+    // Fired in order, so the most recent interruption comes back
+    // first — it is the one still in their head.
+    expect(s.store.unseen(USER).map((r) => r.text)).toEqual(['Thing 3', 'Thing 2', 'Thing 1']);
+    expect(ids).toHaveLength(3);
+  });
+
+  it('44. unseen excludes pending, seen and cancelled', () => {
+    const s = fixture();
+    const task = s.tasks.add(USER, { title: 'Mixed' });
+    const make = (text: string) =>
+      s.store.set(USER, { ownerKind: 'task', ownerId: task.id, remindAt: at(1), text });
+
+    const pending = make('Not yet');
+    const seen = make('Already looked');
+    s.store.markFired(USER, seen.id);
+    s.store.markSeen(USER, seen.id);
+    const calledOff = make('Called off');
+    s.store.cancel(USER, calledOff.id);
+    const outstanding = make('Outstanding');
+    s.store.markFired(USER, outstanding.id);
+
+    expect(s.store.unseen(USER).map((r) => r.id)).toEqual([outstanding.id]);
+    expect(pending.id).not.toBe(outstanding.id);
+  });
+
+  it('45. a rebuild reproduces what was seen', () => {
+    const { s, reminder } = fired();
+    s.store.markSeen(USER, reminder.id);
+
+    s.storage.exec('DELETE FROM reminders');
+    s.events.rebuild();
+
+    expect(s.store.get(USER, reminder.id)?.seenAt).not.toBeNull();
+    expect(s.store.unseen(USER)).toEqual([]);
+  });
+
+  it("46. one principal cannot mark another's reminder seen", () => {
+    const { s, reminder } = fired();
+
+    expect(s.store.markSeen('someone-else', reminder.id)).toBe(false);
+    expect(s.store.get(USER, reminder.id)?.seenAt).toBeNull();
+    expect(s.store.unseen('someone-else')).toEqual([]);
+  });
+
+  it('47. cancelling after it has fired does nothing — only seeing it clears it', () => {
+    // Written expecting the opposite, and the code was right. An
+    // interruption that already happened cannot be retracted: the
+    // person has been told. The only thing that clears it is them
+    // looking at it, which is what `markSeen` is for. (This is also
+    // why `cancelFor` skips fired reminders — test 27.)
+    const { s, reminder } = fired();
+    const before = s.events.count();
+
+    expect(s.store.cancel(USER, reminder.id, 'no longer relevant')).toBe(true);
+    expect(s.events.count()).toBe(before);
+    expect(s.store.unseen(USER).map((r) => r.id)).toEqual([reminder.id]);
+
+    s.store.markSeen(USER, reminder.id);
+    expect(s.store.unseen(USER)).toEqual([]);
+    expect(s.store.get(USER, reminder.id)?.firedAt).not.toBeNull();
+  });
+
+  it('48. an unfired reminder cannot be marked seen', () => {
+    const s = fixture();
+    const task = s.tasks.add(USER, { title: 'Later' });
+    const reminder = s.store.set(USER, {
+      ownerKind: 'task',
+      ownerId: task.id,
+      remindAt: at(5),
+      text: 'Later',
+    });
+
+    expect(s.store.markSeen(USER, reminder.id)).toBe(false);
+    expect(s.store.get(USER, reminder.id)?.seenAt).toBeNull();
+  });
+});

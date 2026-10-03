@@ -159,3 +159,96 @@ describe('the reminder routes', () => {
       .toEqual(['reminders.cancel', 'reminders.list', 'reminders.set']);
   });
 });
+
+/**
+ * S4 tests 49–58: the notification routes.
+ *
+ * These drive the real composition root, so they check the thing the
+ * store tests cannot: that the session a notification points at is
+ * the session the worker actually wrote into.
+ */
+interface NotificationView {
+  id: string;
+  text: string;
+  firedAt: number;
+  sessionId: string;
+}
+
+describe('the notification routes', () => {
+  it('49. a fresh agent has nothing to show', async () => {
+    const result = await call<{ notifications: NotificationView[] }>('/notifications');
+    expect(result.status).toBe(200);
+    expect(result.body.notifications).toEqual([]);
+  });
+
+  it('50. a reminder that has fired appears, and marking it seen clears it', async () => {
+    // Fire it for real: set it in the past and let the scheduler's own
+    // catch-up sweep pick it up, rather than reaching into the store.
+    const task = await call<TaskView>('/tasks', { method: 'POST', body: { title: unique('Bins') } });
+    const reminder = await call<ReminderView>('/reminders', {
+      method: 'POST',
+      body: {
+        text: 'Put the bins out',
+        remindAt: Date.now() - 60_000,
+        ownerKind: 'task',
+        ownerId: task.body.id,
+      },
+    });
+    expect(reminder.status).toBe(201);
+
+    // The worker polls; give it a moment to run the one-shot schedule.
+    const deadline = Date.now() + 15_000;
+    let listed: NotificationView[] = [];
+    while (Date.now() < deadline) {
+      listed = (await call<{ notifications: NotificationView[] }>('/notifications')).body
+        .notifications;
+      if (listed.some((n) => n.id === reminder.body.id)) break;
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+
+    const found = listed.find((n) => n.id === reminder.body.id);
+    expect(found).toBeDefined();
+    expect(found?.text).toBe('Put the bins out');
+    expect(found?.sessionId).toMatch(/^ses-schedule-/);
+
+    // And the session it names really is where the agent spoke about it.
+    const session = await call<{ messages: Array<{ text: string }> }>(
+      `/sessions/${found!.sessionId}`,
+    );
+    expect(session.status).toBe(200);
+    expect(session.body.messages.map((m) => m.text).join('\n')).toContain('Put the bins out');
+
+    const seen = await call(`/notifications/${reminder.body.id}/seen`, { method: 'POST' });
+    expect(seen.status).toBe(200);
+
+    const after = await call<{ notifications: NotificationView[] }>('/notifications');
+    expect(after.body.notifications.map((n) => n.id)).not.toContain(reminder.body.id);
+  }, 30_000);
+
+  it('51. marking an unknown notification seen is a 404, not a silent success', async () => {
+    const result = await call<{ error: string }>('/notifications/R-nope/seen', { method: 'POST' });
+    expect(result.status).toBe(404);
+    expect(result.body.error).toBe('no_such_notification');
+  });
+
+  it('52. a reminder that has not fired is not a notification', async () => {
+    const task = await call<TaskView>('/tasks', { method: 'POST', body: { title: unique('Later') } });
+    const reminder = await call<ReminderView>('/reminders', {
+      method: 'POST',
+      body: {
+        text: 'Much later',
+        remindAt: Date.UTC(2030, 0, 1),
+        ownerKind: 'task',
+        ownerId: task.body.id,
+      },
+    });
+
+    const listed = await call<{ notifications: NotificationView[] }>('/notifications');
+    expect(listed.body.notifications.map((n) => n.id)).not.toContain(reminder.body.id);
+
+    // And it cannot be dismissed, because it has not happened.
+    expect((await call(`/notifications/${reminder.body.id}/seen`, { method: 'POST' })).status).toBe(
+      404,
+    );
+  });
+});

@@ -26,7 +26,7 @@ import type { AskBudget } from '../cognition/calibration/probe.js';
 import type { BiasAuditor } from '../cognition/calibration/audit.js';
 import { report as calibrationReport } from '../cognition/calibration/confidence.js';
 import type { Schedule, ScheduleStore } from '../orchestration/schedule.js';
-import { ScheduleParseError } from '../orchestration/schedule.js';
+import { ScheduleParseError, scheduleSessionId } from '../orchestration/schedule.js';
 import { IDENTITY_CARD_MAX_TOKENS } from '../cognition/context/types.js';
 import type { CalendarEvent, CalendarStore } from '../cognition/calendar/store.js';
 import type { Task, TaskStore } from '../cognition/tasks/store.js';
@@ -1328,6 +1328,37 @@ export class Api {
         cancelled ? 200 : 404,
         cancelled ? { cancelled: params.id } : { error: 'no_such_reminder' },
       );
+    });
+
+    /* ────────────────────── S4 — notifications ─────────────────────── */
+
+    // Only fired reminders, deliberately. The person asked to be told
+    // this, at this moment, and that request is what earns an
+    // interruption; everything else the agent says in the background
+    // is something it chose to say. A badge whose first item is an
+    // unrequested briefing is a badge people learn to ignore.
+
+    this.add('GET', '/notifications', ({ res, principal }) => {
+      if (reminders === undefined) return json(res, 404, { error: 'no_reminders' });
+      json(res, 200, {
+        notifications: reminders.unseen(principal).map((reminder) => ({
+          id: reminder.id,
+          text: reminder.text,
+          firedAt: reminder.firedAt,
+          ownerKind: reminder.ownerKind,
+          ownerId: reminder.ownerId,
+          // Where the agent's own words about it landed, so the client
+          // can open that conversation rather than just saying a
+          // reminder happened.
+          sessionId: scheduleSessionId(reminder.scheduleId),
+        })),
+      });
+    });
+
+    this.add('POST', '/notifications/:id/seen', ({ res, params, principal }) => {
+      if (reminders === undefined) return json(res, 404, { error: 'no_reminders' });
+      const seen = reminders.markSeen(principal, params.id ?? '');
+      json(res, seen ? 200 : 404, seen ? { id: params.id, seen: true } : { error: 'no_such_notification' });
     });
 
     /* ──────────────────────── S2 — the task list ────────────────────── */

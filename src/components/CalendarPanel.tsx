@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { agent, AgentUnavailableError, type CalendarEventView } from '../lib/agent';
+import {
+  agent,
+  AgentUnavailableError,
+  type CalendarEventView,
+  type ReminderView,
+} from '../lib/agent';
 
 /**
  * The calendar — the agent's own, with nothing plugged in.
@@ -54,6 +59,40 @@ function dayLabel(at: number): string {
   return formatted;
 }
 
+/**
+ * S4: "an hour before" resolved against the event's own start.
+ *
+ * `reminders.set` takes an absolute instant on purpose — S3 made that
+ * call so a tool could not quietly attach a reminder to the wrong
+ * moment — and its contract says the *caller* resolves the offset.
+ * This is that caller. The arithmetic happens here, where the event's
+ * start time is actually known, rather than in a tool that would have
+ * to guess which event you meant.
+ */
+const PRESETS: Array<{ id: string; label: string; at: (startsAt: number) => number }> = [
+  { id: 'now-10', label: '10 minutes before', at: (s) => s - 10 * 60_000 },
+  { id: 'now-60', label: 'An hour before', at: (s) => s - 60 * 60_000 },
+  { id: 'now-day', label: 'A day before', at: (s) => s - 86_400_000 },
+  {
+    id: 'eve',
+    label: 'The evening before',
+    at: (startsAt) => {
+      const evening = new Date(startsAt - 86_400_000);
+      evening.setHours(19, 0, 0, 0);
+      return evening.getTime();
+    },
+  },
+];
+
+/** A reminder's moment, written the way a person would say it. */
+const whenLabel = (at: number): string =>
+  new Intl.DateTimeFormat(undefined, {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(at));
+
 const timeLabel = (event: CalendarEventView): string =>
   event.allDay
     ? 'All day'
@@ -66,6 +105,16 @@ const fromLocalInput = (value: string): number => new Date(value).getTime();
 
 export default function CalendarPanel({ onNotice }: { onNotice: (message: string) => void }) {
   const [events, setEvents] = useState<CalendarEventView[]>([]);
+  const [reminders, setReminders] = useState<ReminderView[]>([]);
+  /** Which event has its reminder control open. */
+  const [remindFor, setRemindFor] = useState<string | null>(null);
+  /**
+   * The clock when the data arrived, not at render. Reading it during
+   * render is impure, and it is also wrong: whether a preset is still
+   * in the future should be judged against the data's own age, so an
+   * unrelated re-render cannot change which buttons are available.
+   */
+  const [now, setNow] = useState(() => Date.now());
   /**
    * Explicit, because a panel must not render a state it has not yet
    * confirmed: without this the calendar claims "Nothing coming up"
@@ -79,22 +128,31 @@ export default function CalendarPanel({ onNotice }: { onNotice: (message: string
   const [when, setWhen] = useState('');
   const [where, setWhere] = useState('');
 
-  const load = useCallback(
-    async (search: string) =>
+  const load = useCallback(async (search: string) => {
+    // One await for both, so a row showing a bell and the reminder
+    // behind it cannot disagree because they were fetched apart.
+    const [calendar, reminders] = await Promise.all([
       search.trim() === ''
         ? agent.calendar({
             from: startOfToday(),
             to: startOfToday() + HORIZON_DAYS * 86_400_000,
           })
         : agent.calendar({ q: search.trim() }),
+      agent.reminders(),
+    ]);
+    return { events: calendar.events, reminders: reminders.reminders };
+  }, []);
+
+  const apply = useCallback(
+    (result: { events: CalendarEventView[]; reminders: ReminderView[] }) => {
+      setEvents(result.events);
+      setReminders(result.reminders);
+      setNow(Date.now());
+      setError(null);
+      setLoaded(true);
+    },
     [],
   );
-
-  const apply = useCallback((result: { events: CalendarEventView[] }) => {
-    setEvents(result.events);
-    setError(null);
-    setLoaded(true);
-  }, []);
 
   const fail = useCallback((cause: unknown) => {
     setError(
@@ -106,6 +164,10 @@ export default function CalendarPanel({ onNotice }: { onNotice: (message: string
   }, []);
 
   const refresh = useCallback(async () => load(query).then(apply, fail), [load, query, apply, fail]);
+
+  // Reminders can be set or called off from the to-do panel, which
+  // sits in the same sheet as this one.
+  useEffect(() => agent.onRemindersChanged(() => void refresh()), [refresh]);
 
   useEffect(() => {
     let live = true;
@@ -161,6 +223,43 @@ export default function CalendarPanel({ onNotice }: { onNotice: (message: string
     if (last !== undefined && last.key === key) last.items.push(event);
     else days.push({ key, at: event.startsAt, items: [event] });
   }
+
+  /** The pending reminder on an event, if it has one. */
+  const reminderFor = (eventId: string): ReminderView | undefined =>
+    reminders.find(
+      (reminder) =>
+        reminder.ownerKind === 'event' &&
+        reminder.ownerId === eventId &&
+        reminder.state === 'pending',
+    );
+
+  const setReminder = async (event: CalendarEventView, at: number) => {
+    try {
+      await agent.setReminder({
+        text: event.title,
+        remindAt: at,
+        ownerKind: 'event',
+        ownerId: event.id,
+      });
+      setRemindFor(null);
+      await refresh();
+      agent.remindersChanged();
+      onNotice('Reminder set.');
+    } catch (cause) {
+      onNotice((cause as Error).message);
+    }
+  };
+
+  const callOff = async (reminder: ReminderView) => {
+    try {
+      await agent.cancelReminder(reminder.id);
+      await refresh();
+      agent.remindersChanged();
+      onNotice('Reminder called off.');
+    } catch (cause) {
+      onNotice((cause as Error).message);
+    }
+  };
 
   if (error !== null) {
     return (
@@ -219,15 +318,63 @@ export default function CalendarPanel({ onNotice }: { onNotice: (message: string
                     ) : null}
                   </div>
                   <button
+                    className={`cal-btn${reminderFor(event.id) === undefined ? '' : ' is-set'}`}
+                    aria-label={
+                      reminderFor(event.id) === undefined
+                        ? `Set a reminder for ${event.title}`
+                        : `Reminder set for ${event.title}`
+                    }
+                    onClick={() => setRemindFor(remindFor === event.id ? null : event.id)}
+                  >
+                    {reminderFor(event.id) === undefined ? 'Remind' : 'Reminded'}
+                  </button>
+                  <button
                     className="cal-btn is-danger"
                     onClick={async () => {
                       await agent.cancelCalendarEvent(event.id);
                       await refresh();
+                      // Cancelling an event cancels its reminders
+                      // (S3's cascade), so the to-do panel's list has
+                      // changed too.
+                      agent.remindersChanged();
                       onNotice('Cancelled.');
                     }}
                   >
                     Cancel
                   </button>
+                  {remindFor !== event.id ? null : (
+                    <div className="cal-remind">
+                      {reminderFor(event.id) === undefined ? (
+                        <>
+                          {/* Offsets, not absolute times: "an hour
+                              before" is what a person means, and the
+                              event's own start is right here. */}
+                          {PRESETS.map((preset) => (
+                            <button
+                              key={preset.id}
+                              className="cal-btn"
+                              disabled={preset.at(event.startsAt) <= now}
+                              onClick={() => void setReminder(event, preset.at(event.startsAt))}
+                            >
+                              {preset.label}
+                            </button>
+                          ))}
+                        </>
+                      ) : (
+                        <>
+                          <span className="cal-where">
+                            {whenLabel(reminderFor(event.id)!.remindAt)}
+                          </span>
+                          <button
+                            className="cal-btn is-danger"
+                            onClick={() => void callOff(reminderFor(event.id)!)}
+                          >
+                            Call off
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
