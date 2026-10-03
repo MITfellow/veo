@@ -185,6 +185,13 @@ and the answer is still not to delete tests.
   route that forgets to cascade would leave an armed reminder. Three
   routes cascade today and they are tested; a fourth added later would
   not be. A check at fire time would be belt and braces.
+- **Reopening a task does not bring its reminder back.** Completing
+  cancels the reminder; unticking leaves it cancelled. I think that is
+  right — the moment it was set for has usually passed by then, and
+  silently re-arming a reminder for a time nobody chose again is worse
+  than making the person set a new one — but it is an asymmetry a user
+  could reasonably be surprised by, and it is not currently explained
+  anywhere in the UI.
 - **`reminder:read` for TOOL trust.** I gave TOOL read but not set, by
   analogy with the calendar. I am not certain a tool's output should
   see the reminder list at all.
