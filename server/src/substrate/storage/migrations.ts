@@ -164,6 +164,57 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX captures_captured_at ON captures(captured_at DESC, id);
     `,
   },
+  {
+    version: 5,
+    name: 'vault',
+    sql: `
+      -- NOT A PROJECTION. Decision 006: wrapped keys and secret ciphertext
+      -- are high-entropy bytes from a CSPRNG. No replay reconstructs them,
+      -- they must never enter the log, and \`rebuild\` must not drop them.
+      -- They are excluded from PROJECTION_TABLES for exactly that reason.
+      CREATE TABLE keyring (
+        id                 TEXT PRIMARY KEY,
+        salt_passphrase    BLOB NOT NULL,
+        salt_recovery      BLOB NOT NULL,
+        wrapped_passphrase BLOB,          -- NULL after panic
+        wrapped_recovery   BLOB,          -- NULL after panic
+        argon_mem_mib      INTEGER NOT NULL,
+        argon_iterations   INTEGER NOT NULL,
+        argon_parallelism  INTEGER NOT NULL,
+        created_at         INTEGER NOT NULL,
+        destroyed_at       INTEGER         -- the tombstone outlives the keys
+      );
+
+      -- NOT A PROJECTION. Values are sealed under the MDK, bound by AAD to
+      -- their own name and version so a swapped row will not open.
+      CREATE TABLE secrets (
+        name       TEXT    NOT NULL,
+        version    INTEGER NOT NULL,
+        sealed     BLOB    NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (name, version)
+      );
+
+      -- NOT A PROJECTION. One random key per shreddable item, wrapped under
+      -- the MDK. Deleting a row is the shred (invariant 10).
+      CREATE TABLE item_keys (
+        key_id     TEXT PRIMARY KEY,
+        wrapped    BLOB NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      -- NOT A PROJECTION. The quarantine's side table (§21). The privileged
+      -- path has no handle to it; only the quarantine reads it, and only
+      -- when presented with a FOREIGN-trust context.
+      CREATE TABLE quarantined_content (
+        ref_id     TEXT PRIMARY KEY,
+        source     TEXT NOT NULL,
+        kind       TEXT NOT NULL,
+        content    TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+    `,
+  },
 ];
 
 /** The schema version a fresh database lands on. */

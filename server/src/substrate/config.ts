@@ -26,6 +26,26 @@ export const ConfigSchema = z
     host: z.string().min(1).default('127.0.0.1'),
     /** §30 autonomy ladder. L0 means the agent proposes and never acts. */
     autonomy: z.number().int().min(0).max(4).default(0),
+
+    /**
+     * §D.4 vault settings.
+     *
+     * The Argon2 cost factor is duplicated here rather than imported from
+     * `security/kdf.ts`: the layer rule (§12) forbids substrate importing
+     * security, and inverting that for one constant would invert it forever.
+     * `kdf.test.ts` asserts the two definitions have not drifted.
+     */
+    argon2: z
+      .object({
+        memMiB: z.number().int().min(8).max(4096),
+        iterations: z.number().int().min(1).max(64),
+        parallelism: z.number().int().min(1).max(16),
+      })
+      .strict()
+      .default({ memMiB: 64, iterations: 3, parallelism: 1 }),
+
+    /** Minutes of inactivity before the vault locks itself. 0 disables it. */
+    idleLockMinutes: z.number().int().min(0).max(1440).default(60),
   })
   .strict();
 

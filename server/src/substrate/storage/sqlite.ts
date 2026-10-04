@@ -33,6 +33,21 @@ export interface SqliteOptions {
   path: string;
 }
 
+/**
+ * better-sqlite3 binds BLOBs from `Buffer`, not from a bare `Uint8Array`.
+ * Converting here keeps every caller — especially the crypto in `security/`,
+ * which deals in `Uint8Array` throughout — free of storage-engine trivia.
+ * `Buffer.from(view.buffer, …)` aliases rather than copies, so key material
+ * is not silently duplicated across the heap on its way to disk.
+ */
+function bind(params: readonly unknown[]): unknown[] {
+  return params.map((param) =>
+    param instanceof Uint8Array && !Buffer.isBuffer(param)
+      ? Buffer.from(param.buffer, param.byteOffset, param.byteLength)
+      : param,
+  );
+}
+
 export function openStorage(options: SqliteOptions): Storage {
   if (options.path !== ':memory:') {
     mkdirSync(dirname(options.path), { recursive: true });
@@ -44,10 +59,10 @@ export function openStorage(options: SqliteOptions): Storage {
     prepare(sql: string): Statement {
       const stmt = db.prepare(sql);
       return {
-        run: (...params) => stmt.run(...(params as never[])),
-        get: <T>(...params: readonly unknown[]) => stmt.get(...(params as never[])) as T | undefined,
-        all: <T>(...params: readonly unknown[]) => stmt.all(...(params as never[])) as T[],
-        iterate: <T>(...params: readonly unknown[]) => stmt.iterate(...(params as never[])) as IterableIterator<T>,
+        run: (...params) => stmt.run(...(bind(params) as never[])),
+        get: <T>(...params: readonly unknown[]) => stmt.get(...(bind(params) as never[])) as T | undefined,
+        all: <T>(...params: readonly unknown[]) => stmt.all(...(bind(params) as never[])) as T[],
+        iterate: <T>(...params: readonly unknown[]) => stmt.iterate(...(bind(params) as never[])) as IterableIterator<T>,
       };
     },
     exec: (sql) => void db.exec(sql),

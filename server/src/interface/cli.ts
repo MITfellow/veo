@@ -163,11 +163,15 @@ Commands (M0):
   verify-chain   hash-chain integrity over the whole log
   rebuild        drop every projection and replay the log
 
+Commands (M1):
+  vault <cmd>    init, status, set, get, list, forget, panic
+                 run 'arish vault help' for detail
+
 Options:
   --json         machine-readable output on stdout
   --data-dir     override the data directory
 
-Later milestones add: init, start, unlock, lock, replay, backup, restore,
+Later milestones add: init, start, replay, backup, restore,
 export, import, memory. They are absent rather than stubbed (§61).
 `;
 
@@ -210,8 +214,49 @@ export function run(argv: readonly string[], io: CliIo = defaultIo): number {
   }
 }
 
+/**
+ * The async entry point.
+ *
+ * `run` stays synchronous because every M0 command is, and a synchronous
+ * function is easier to test and to reason about. The vault is unavoidably
+ * async — Argon2id and WebCrypto both are — so it gets its own door rather
+ * than making every existing command return a promise it does not need.
+ */
+export async function runAsync(argv: readonly string[], io: CliIo = defaultIo): Promise<number> {
+  if (argv[0] !== 'vault') return run(argv, io);
+
+  const { runVault, ttyPrompt, closePrompt } = await import('./vault-cli.js');
+  const json = argv.includes('--json');
+  const dataDirIndex = argv.indexOf('--data-dir');
+  const override = dataDirIndex >= 0 ? argv[dataDirIndex + 1] : undefined;
+
+  let config: Config;
+  try {
+    config = configFromEnv(io.env, override === undefined ? {} : { dataDir: override });
+  } catch (error) {
+    if (error instanceof ConfigError) {
+      io.err(error.message);
+      return 2;
+    }
+    throw error;
+  }
+
+  const substrate = createSubstrate({ dbPath: dbPathFor(config), timeZone: config.timeZone });
+  try {
+    return await runVault(
+      argv.slice(1).filter((a) => a !== '--json' && a !== override && a !== '--data-dir'),
+      { storage: substrate.storage, clock: substrate.clock, config, log: substrate.events },
+      { out: io.out, err: io.err, prompt: ttyPrompt },
+      json,
+    );
+  } finally {
+    closePrompt();
+    substrate.close();
+  }
+}
+
 // Only self-execute when run as a binary, so importing this file in a test is free.
 const invokedDirectly = process.argv[1]?.endsWith('cli.js') === true || process.argv[1]?.endsWith('cli.ts') === true;
 if (invokedDirectly) {
-  process.exitCode = run(process.argv.slice(2));
+  process.exitCode = await runAsync(process.argv.slice(2));
 }

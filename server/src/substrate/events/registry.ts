@@ -66,6 +66,66 @@ const EntityCreated = z.object({
   name: z.string().min(1),
 }).strict();
 
+// ---- M1: security (§23, §21, §19). Values never appear in any of these. ----
+
+const VaultLifecycle = z.object({ reason: z.enum(['explicit', 'idle', 'init', 'recovery']) }).strict();
+
+const SecretCreated = z.object({
+  reference: z.string().regex(/^secret:\/\/[^/]+\/\d+$/),
+  name: z.string().min(1),
+  version: z.number().int().min(1),
+}).strict();
+
+const SecretRead = z.object({
+  reference: z.string().min(1),
+  principal: z.string().min(1),
+  runId: z.string().nullable().default(null),
+  tool: z.string().nullable().default(null),
+}).strict();
+
+const SecretDestroyed = z.object({
+  /** The shred tombstone. Auditable; the content is gone (invariant 10). */
+  keyId: z.string().min(1),
+  scope: z.enum(['item', 'vault']),
+}).strict();
+
+const QuarantineEntered = z.object({
+  refId: z.string().min(1),
+  source: z.string().min(1),
+  bytes: z.number().int().min(0),
+}).strict();
+
+const QuarantineExtracted = z.object({
+  refId: z.string().min(1),
+  kind: z.string().min(1),
+  /** Field NAMES only. A value here would defeat the whole channel (§21). */
+  fields: z.array(z.string()),
+}).strict();
+
+const QuarantineReleased = z.object({
+  refId: z.string().min(1),
+  to: z.string().min(1),
+}).strict();
+
+const PolicyDenied = z.object({
+  rule: z.string().min(1),
+  detail: z.string(),
+  capabilities: z.array(z.string()).default([]),
+}).strict();
+
+const RuleOfTwoBlocked = z.object({
+  untrustedInput: z.boolean(),
+  sensitiveAccess: z.boolean(),
+  externalChange: z.boolean(),
+  tool: z.string().nullable().default(null),
+}).strict();
+
+const TrustDowngraded = z.object({
+  from: TrustLevelSchema,
+  to: TrustLevelSchema,
+  reason: z.string().min(1),
+}).strict();
+
 const SystemLifecycle = z.object({ version: z.string().min(1) }).strict();
 const MigrationApplied = z.object({ version: z.number().int(), name: z.string().min(1) }).strict();
 const ProjectionRebuilt = z.object({ projector: z.string().min(1), events: z.number().int().min(0) }).strict();
@@ -86,6 +146,17 @@ const SCHEMAS = new Map<EventType, PayloadSchema>([
   ['fact.retracted', FactRetracted as PayloadSchema],
   ['fact.used', FactUsed as PayloadSchema],
   ['entity.created', EntityCreated as PayloadSchema],
+  ['vault.unlocked', VaultLifecycle as PayloadSchema],
+  ['vault.locked', VaultLifecycle as PayloadSchema],
+  ['vault.secret.created', SecretCreated as PayloadSchema],
+  ['vault.secret.read', SecretRead as PayloadSchema],
+  ['vault.secret.destroyed', SecretDestroyed as PayloadSchema],
+  ['quarantine.entered', QuarantineEntered as PayloadSchema],
+  ['quarantine.extracted', QuarantineExtracted as PayloadSchema],
+  ['quarantine.released', QuarantineReleased as PayloadSchema],
+  ['policy.denied', PolicyDenied as PayloadSchema],
+  ['policy.ruleoftwo-blocked', RuleOfTwoBlocked as PayloadSchema],
+  ['trust.downgraded', TrustDowngraded as PayloadSchema],
   ['system.started', SystemLifecycle as PayloadSchema],
   ['system.stopped', SystemLifecycle as PayloadSchema],
   ['migration.applied', MigrationApplied as PayloadSchema],

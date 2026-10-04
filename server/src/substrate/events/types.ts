@@ -38,6 +38,11 @@ export const EVENT_TYPES = [
   'artifact.created', 'artifact.deleted',
   // vault (M1)
   'vault.unlocked', 'vault.locked', 'vault.rotated',
+  'vault.secret.created', 'vault.secret.read', 'vault.secret.destroyed',
+  // quarantine (§21)
+  'quarantine.entered', 'quarantine.extracted', 'quarantine.released',
+  // policy (§19, §29)
+  'policy.ruleoftwo-blocked',
   // egress — declared so that a future network call cannot be unlogged
   'egress.attempted', 'egress.blocked',
   // budgets and degradation (§27)

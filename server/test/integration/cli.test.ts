@@ -3,6 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { run, type CliIo } from '../../src/interface/cli.js';
+import { runVault } from '../../src/interface/vault-cli.js';
+import { ConfigSchema } from '../../src/substrate/config.js';
+import { createTestSubstrate } from '../fakes/substrate.js';
 import { createSubstrate } from '../../src/substrate/index.js';
 import { FakeClock } from '../fakes/clock.js';
 import { FakeCrypto } from '../fakes/crypto.js';
@@ -99,5 +102,75 @@ describe('CLI', () => {
     const help = o.stdout.join('\n');
     expect(help).toMatch(/doctor/);
     expect(help).toMatch(/absent rather than stubbed/);
+  });
+});
+
+describe('arish vault (M1)', () => {
+  const answers = (...queue: string[]) => {
+    const q = [...queue];
+    return (): Promise<string> => Promise.resolve(q.shift() ?? '');
+  };
+
+  function vaultDeps() {
+    const s = createTestSubstrate();
+    const out: string[] = [];
+    const err: string[] = [];
+    const deps = { storage: s.storage, clock: s.clock, config: { ...ConfigSchema.parse({}), argon2: { memMiB: 8, iterations: 1, parallelism: 1 } }, log: s.events };
+    return { s, out, err, deps };
+  }
+
+  it('init prints a recovery code exactly once, then set/list/get round-trips', async () => {
+    const { s, out, err, deps } = vaultDeps();
+    expect(await runVault(['init'], deps, { out: (l) => void out.push(l), err: (l) => void err.push(l), prompt: answers('correct horse battery', 'correct horse battery') })).toBe(0);
+    expect(out.join('\n')).toMatch(/Recovery code: /);
+
+    out.length = 0;
+    expect(await runVault(['set', 'stripe'], deps, { out: (l) => void out.push(l), err: (l) => void err.push(l), prompt: answers('correct horse battery', 'sk-live-abcdef0123456789') })).toBe(0);
+    expect(out[0]).toBe('secret://stripe/1');
+
+    out.length = 0;
+    expect(await runVault(['list'], deps, { out: (l) => void out.push(l), err: () => {}, prompt: answers('correct horse battery') })).toBe(0);
+    expect(out[0]).toBe('stripe  v1');
+    // §23: list never shows a value.
+    expect(out.join('')).not.toContain('sk-live');
+
+    out.length = 0;
+    await runVault(['get', 'secret://stripe/1'], deps, { out: (l) => void out.push(l), err: () => {}, prompt: answers('correct horse battery') });
+    expect(out.join('')).not.toContain('sk-live-abcdef0123456789');
+    expect(out.join('')).toContain('resolves');
+    s.close();
+  });
+
+  it('a wrong passphrase fails without saying anything useful', async () => {
+    const { s, out, err, deps } = vaultDeps();
+    await runVault(['init'], deps, { out: () => {}, err: () => {}, prompt: answers('right one here', 'right one here') });
+    const code = await runVault(['set', 'x'], deps, { out: (l) => void out.push(l), err: (l) => void err.push(l), prompt: answers('wrong one here', 'v') });
+    expect(code).toBe(1);
+    expect(err.join('')).toContain('bad_passphrase');
+    expect(out).toHaveLength(0);
+    s.close();
+  });
+
+  it('refuses to re-initialise an existing vault', async () => {
+    const { s, err, deps } = vaultDeps();
+    await runVault(['init'], deps, { out: () => {}, err: () => {}, prompt: answers('a passphrase', 'a passphrase') });
+    expect(await runVault(['init'], deps, { out: () => {}, err: (l) => void err.push(l), prompt: answers('other one', 'other one') })).toBe(1);
+    expect(err.join('')).toContain('Refusing to overwrite');
+    s.close();
+  });
+
+  it('panic requires the exact confirmation phrase', async () => {
+    const { s, err, deps } = vaultDeps();
+    await runVault(['init'], deps, { out: () => {}, err: () => {}, prompt: answers('a passphrase', 'a passphrase') });
+    expect(await runVault(['panic'], deps, { out: () => {}, err: (l) => void err.push(l), prompt: answers('yes') })).toBe(1);
+    expect(err.join('')).toContain('Aborted');
+    s.close();
+  });
+
+  it('unknown vault command exits non-zero with usage', async () => {
+    const { s, err, deps } = vaultDeps();
+    expect(await runVault(['exfiltrate'], deps, { out: () => {}, err: (l) => void err.push(l), prompt: answers() })).toBe(1);
+    expect(err.join('\n')).toContain('usage: arish vault');
+    s.close();
   });
 });

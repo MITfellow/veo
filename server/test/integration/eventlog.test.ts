@@ -26,7 +26,7 @@ describe('event log — append', () => {
     const s = createTestSubstrate();
     let caught: EventError | undefined;
     try {
-      s.events.append({ type: 'vault.unlocked', actor: 'user:ara', trust: 'USER', payload: {} });
+      s.events.append({ type: 'schedule.fired', actor: 'user:ara', trust: 'USER', payload: {} });
     } catch (error) { caught = error as EventError; }
     expect(caught?.kind).toBe('unregistered_event_type');
     expect(s.events.count()).toBe(0);

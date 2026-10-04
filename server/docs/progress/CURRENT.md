@@ -1,49 +1,75 @@
-# Current state
+# CURRENT
 
-**Milestone:** M0 — Substrate · **COMPLETE**
-**Last verified:** `npm run check` green — 84 tests, 6.5s (budget 60s),
-`tsc --noEmit` clean, `eslint . --max-warnings 0` clean.
+The file Appendix F asks for. Read this first; it is the only place that
+claims to say where things stand.
 
-## Done in this milestone
+**Last verified by running:** `npm run check` → **195 tests, 23 files, 9.6s**
+(60s budget), `tsc --noEmit` exit 0, `eslint . --max-warnings 0` clean.
 
-Ports and fakes · monotonic ULID · injected clock · strict config · SQLite +
-WAL + four migrations · bitemporal `facts` · event log with per-type schemas,
-redaction-before-hash, hash chain and upcasters · six projections · logical
-snapshot digest · CLI (`doctor`, `status`, `verify-chain`, `rebuild`).
+---
 
-**The §58 M0 gate is met by execution, not assertion:** 10k events → drop every
-projection → rebuild → byte-identical. Also verified live on disk: 4,000 events
-chain-verified, a tampered row caught at the exact seq with exit 1, and a
-`SIGKILL` mid-write losing nothing.
+## Where we are
 
-## In flight — the next thing to do
+| Milestone | State |
+| --- | --- |
+| **M0 — Substrate** | **Complete.** Committed `dbbc465`. |
+| **M1 — Security** | **Complete.** Tests, demo and notes done; commit pending. |
+| M2 — Memory | Not started. |
+| M3 → M10 | Not started, not scaffolded (§61). |
 
-Nothing is half-built. **Start M1 — Security**, and start with the test list in
-a new `docs/progress/M1.md` before any implementation.
+No model is configured, and none can be. `arish doctor` asserts this as a
+check rather than a comment: `model: none configured — L1, the intended
+state of this build`.
 
-M1's first decision, which blocks its first line of code: **Argon2id.** Node's
-`webcrypto` does not provide it (only PBKDF2 and HKDF). Appendix E.9 says
-`scrypt` is explicitly *not* acceptable as a substitute, and that a dependency
-is permitted if `webcrypto` cannot do it — preferring pure-WASM over native.
-So M1 opens by writing `docs/decisions/005-argon2id.md`, then the keyring.
+## The next concrete action
 
-## Blocked / unsure
+**Begin M2 — Memory, by writing its test list before any implementation.**
 
-- **§49 / M7 cannot be executed as literally written.** Three of the eleven
-  Veo files it says to *create* already exist and are wired to the pre-existing
-  `agent/` platform, and `vite.config.ts` already proxies to `127.0.0.1:7777`
-  rather than `8787`. Recorded in decision 001. **Not blocking: M0–M6 touch
-  zero files outside `server/`.** It needs an owner decision before M7 starts.
-- Node is v20.20.2, not 22 (decision 002). Nothing the platform uses needs 22.
+M2 owns the bitemporal fact store on top of M0's `facts` projection, entity
+resolution, and the memory lifecycle. Two things from M1 feed straight into
+it and should be settled while writing the list:
 
-## Do not forget
+1. **Item content belongs to M2 but item keys belong to M1.** `vault.sealItem`
+   / `openItem` / `shred` exist and are tested, with no store above them. M2
+   is what makes `arish vault forget` reachable from the CLI, and the key id
+   convention (`note:diary` in the demo) needs deciding properly.
+2. **Decision 007 constrains every extractor M2 writes.** An extraction may
+   carry bounded scalars, never a span of its source. `memory.extract` is a
+   Cognitive Job whose baseline must respect this, because its model
+   strategy in M4 certainly will not do so unprompted.
 
-- `agent/` is a *different*, pre-existing platform in this repo and it **has a
-  model provider**. It is not a reference for `server/` and its tests do not
-  count toward any gate here (decision 001).
-- The `examples/` directory does not exist yet and must not be created until
-  M2 needs it (§61). `npm run lint` globs `.` so it will be picked up
-  automatically.
-- M1 must add `vault.*` payload schemas to `events/registry.ts` — the types are
-  already in the closed union and `append()` will refuse them until then. That
-  refusal is by design (decision 003); do not "fix" it by loosening `append`.
+## Before M7, stop and ask
+
+**Decision 001 flags a real collision and it has not been raised yet.**
+
+§49 lists eleven Veo files that may be touched. Three of them already exist
+with different contents (`MemoryPanel.tsx`, `store.tsx`, `seed.ts`), and
+`vite.config.ts` proxies to **7777**, not the 8787 the spec names. A twelfth
+file means stop and report (§49), so this must be put to the user **before
+M7 begins**, not discovered during it.
+
+## How to check any of this yourself
+
+```bash
+cd server
+npm install
+npm run check                      # the gate: typecheck, lint, 195 tests
+npm run build
+bash docs/progress/M0-demo.sh      # 10k events, rebuild, tamper, SIGKILL
+bash docs/progress/M1-demo.sh      # vault, shredding, chain tamper
+```
+
+Both demos run the real built binary against real SQLite files in `/tmp`.
+
+## Standing rules I keep having to re-read
+
+- **Never weaken, skip or `.only` a test.** When an M0 test failed because
+  M1 registered the schema it asserted was absent, the fix was to repoint it
+  at an M5 event type, not to delete it. The assertion still has a job.
+- **A structural test needs a negative control.** `containment.test.ts` had
+  a regex typo that made it match nothing and pass forever. It now tests its
+  own detector first.
+- **Verify by running.** `npm run check` is the only thing that gets to say
+  something works. Two of M1's genuine defects — the readline buffering hang
+  and the quarantine passthrough leak — were invisible to review and obvious
+  to execution.
