@@ -3,8 +3,9 @@
 The file Appendix F asks for. Read this first; it is the only place that
 claims to say where things stand.
 
-**Last verified by running:** `npm run check` → **244 tests, 25 files, 10.5s**
+**Last verified by running:** `npm run check` → **362 tests, 28 files, 11.9s**
 (60s budget), `tsc --noEmit` exit 0, `eslint . --max-warnings 0` clean.
+Then driven in headless Chromium, eleven screenshots, zero console errors.
 
 ---
 
@@ -15,6 +16,7 @@ claims to say where things stand.
 | **M0 — Substrate** | **Complete.** Committed `dbbc465`. |
 | **M1 — Security** | **Complete.** Committed `862c919`. |
 | **Onboarding + Cognitive Jobs** | **Complete, out of band.** Decision 008 — the milestone order was broken deliberately and recorded. See `ONBOARDING.md`. |
+| **Browser use** | **Complete, out of band.** Decision 009 + its addendum. See `BROWSER.md`. HTML stack, agent view, sealed plan, 15-shape attack corpus, a browser UI. Events are **not** yet appended to the log — the one real gap. |
 | M2 — Memory | **Not started. Next.** |
 | M3 → M10 | Not started, not scaffolded (§61). |
 
@@ -34,7 +36,19 @@ against a fake provider.
 
 ## The next concrete action
 
-**Begin M2 — Memory, by writing its test list before any implementation.**
+**Append browser events to the event log, then begin M2.**
+
+`BROWSER.md` is honest that this is missing. The session emits a
+`SessionEvents` record per step and the API keeps an in-memory transcript,
+but nothing reaches `substrate/events`, so decision 009's claim that a
+browsing session is *replayable* is currently only a claim that it is
+*observable*. Closing it means four new types in the closed event registry
+(`browser.planned`, `browser.navigated`, `browser.acted`,
+`browser.refused`) and therefore a migration — which is exactly why it was
+not bolted on at the end.
+
+Then: **begin M2 — Memory, by writing its test list before any
+implementation.**
 
 The onboarding detour is closed. M2 now inherits working `memory.extract`,
 `memory.consolidate` and `entity.resolve` baselines, so its surface is
@@ -72,7 +86,9 @@ npm run check                      # the gate: typecheck, lint, 195 tests
 npm run build
 bash docs/progress/M0-demo.sh      # 10k events, rebuild, tamper, SIGKILL
 bash docs/progress/M1-demo.sh      # vault, shredding, chain tamper
-npm start -- serve                 # the Get Started UI on 127.0.0.1:8787
+bash docs/progress/BROWSER-demo.sh # sealed plan, injection, Rule of Two
+npm start -- serve                 # 127.0.0.1:8787 — Get Started, and
+                                   # /browser.html for the browser surface
 ```
 
 Both demos run the real built binary against real SQLite files in `/tmp`.
@@ -88,7 +104,15 @@ Both demos run the real built binary against real SQLite files in `/tmp`.
 - **A green suite is not a working feature.** The onboarding work shipped
   three bugs that review missed and the browser found in seconds: a fact
   extractor that matched nothing, an `innerHTML` that swallowed `<name>`,
-  and a model page that echoed a pasted API key back. Drive the thing.
+  and a model page that echoed a pasted API key back. The browser work then
+  shipped five more into a green suite — a plan that could never take its
+  first step, a click that escaped an origin pin, `<button>` mis-tiered as
+  an interaction, a page title that was always empty, and an approval
+  checkbox that never showed whether you had approved. Drive the thing.
+- **`.toThrow()` with no argument asserts almost nothing.** A browser test
+  that proved a click could not leave its origin was passing because the
+  static driver happened not to hold the target page. The hole it was
+  guarding was real and open. Assert the refusal *text*.
 - **Verify by running.** `npm run check` is the only thing that gets to say
   something works. Two of M1's genuine defects — the readline buffering hang
   and the quarantine passthrough leak — were invisible to review and obvious

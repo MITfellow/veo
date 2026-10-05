@@ -13,6 +13,15 @@ import {
   setConnector,
   type ApiResponse,
 } from './api.js';
+import {
+  BrowserState,
+  actInSession,
+  browserCatalogue,
+  readPageForUser,
+  resetSession,
+  sessionState,
+  startSession,
+} from './browser-api.js';
 
 /**
  * The local HTTP surface (§53).
@@ -37,6 +46,9 @@ export interface HttpDeps {
   config: Config;
   now: () => number;
   eventCount: () => number;
+  /** Content digest, injected rather than imported: `interface/` has no crypto. */
+  digest?: (input: string) => string;
+  browser?: BrowserState;
   files?: FileStore;
   /** Root of the static UI. Defaults to `web/` beside the built output. */
   webRoot?: string;
@@ -68,7 +80,51 @@ const ROUTES: Record<string, (body: unknown, deps: HttpDeps) => ApiResponse> = {
   'GET /api/connectors': (_b, d) => listConnectors(d.storage),
   'GET /api/model': (_b, d) => modelStatus(d.config),
   'POST /api/model/check': (body) => checkModel(body),
+  'GET /api/browser/catalogue': () => browserCatalogue(),
+  'GET /api/browser': (_b, d) => sessionState(browserOf(d)),
+  'GET /api/browser/page': (_b, d) => readPageForUser(browserOf(d)),
+  'POST /api/browser/plan': (body, d) => startSession(browserOf(d), body),
+  'POST /api/browser/reset': (_b, d) => resetSession(browserOf(d)),
 };
+
+const ASYNC_ROUTES: Record<string, (body: unknown, deps: HttpDeps) => Promise<ApiResponse>> = {
+  'POST /api/browser/act': (body, d) => actInSession(browserOf(d), body),
+};
+
+/**
+ * One browser state per deps object, created on first use.
+ *
+ * Lazy because most requests never touch it, and attached to `deps` so a
+ * test that builds its own deps gets its own browser and cannot be
+ * polluted by another test's session.
+ */
+const BROWSERS = new WeakMap<HttpDeps, BrowserState>();
+
+function browserOf(deps: HttpDeps): BrowserState {
+  if (deps.browser !== undefined) return deps.browser;
+  let state = BROWSERS.get(deps);
+  if (state === undefined) {
+    state = new BrowserState({ now: deps.now, digest: deps.digest ?? weakDigest });
+    BROWSERS.set(deps, state);
+  }
+  return state;
+}
+
+/**
+ * A fallback digest for sealing a plan when none was injected.
+ *
+ * Not a security primitive and not pretending to be: the seal detects
+ * accidental mutation of a committed plan inside one process. A caller
+ * that needs it to resist an adversary passes a real digest in `deps`.
+ */
+function weakDigest(input: string): string {
+  let h = 2166136261;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
 
 const CONNECTOR_TOGGLE = /^\/api\/connectors\/([a-z0-9-]+)$/;
 
@@ -83,6 +139,9 @@ export async function handleApi(
 
   const exact = ROUTES[`${method} ${path}`];
   if (exact !== undefined) return Promise.resolve(exact(body, deps));
+
+  const async_ = ASYNC_ROUTES[`${method} ${path}`];
+  if (async_ !== undefined) return async_(body, deps);
 
   const id = method === 'POST' ? CONNECTOR_TOGGLE.exec(path)?.[1] : undefined;
   if (id !== undefined) return setConnector(deps.storage, id, body, deps.now());
