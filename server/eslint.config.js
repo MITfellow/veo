@@ -95,10 +95,25 @@ export default tseslint.config(
   { files: ['src/**/*.ts'], rules: NO_AMBIENT },
 
   // … and is lifted only where the nondeterminism is *supposed* to enter.
-  // These three files and the fakes are the entire surface, which is what
-  // makes the ban auditable by reading four paths.
+  // These files and the fakes are the entire surface, which is what makes
+  // the ban auditable by reading a short list.
+  //
+  // `substrate/files.ts` is the FileStore port: the only `node:fs` in the
+  // platform. `interface/http.ts` is the socket adapter, same category as
+  // the CLI — it reads the environment and binds a port, and everything it
+  // decides lives in `interface/api.ts`, which is NOT lifted.
   {
-    files: ['src/substrate/ports.ts', 'src/substrate/clock.ts', 'src/substrate/ids.ts', 'src/substrate/crypto.ts', 'src/substrate/config.ts', 'src/substrate/storage/sqlite.ts', 'src/interface/cli.ts'],
+    files: [
+      'src/substrate/ports.ts',
+      'src/substrate/clock.ts',
+      'src/substrate/ids.ts',
+      'src/substrate/crypto.ts',
+      'src/substrate/config.ts',
+      'src/substrate/files.ts',
+      'src/substrate/storage/sqlite.ts',
+      'src/interface/cli.ts',
+      'src/interface/http.ts',
+    ],
     rules: {
       'no-restricted-properties': 'off',
       'no-restricted-globals': 'off',

@@ -62,7 +62,7 @@ export type RuleOfTwoVerdict =
   | { allowed: false; triple: Triple; reason: string };
 
 /** Capabilities that constitute sensitive access on their own. */
-const SENSITIVE_CAPABILITIES: readonly Capability[] = ['vault:read', 'memory:read', 'memory:write', 'memory:promote'];
+export const SENSITIVE_CAPABILITIES: readonly Capability[] = ['vault:read', 'memory:read', 'memory:write', 'memory:promote'];
 
 export function computeTriple(step: StepDescriptor): Triple {
   return {

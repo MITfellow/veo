@@ -1,0 +1,321 @@
+/*
+ * The Get Started surface.
+ *
+ * Modelled on the Windows 11 Get Started app: a quiet split layout with the
+ * explanation on the left and the choices on the right, chrome pushed into
+ * the bottom corners. Fluent's proportions, ARISH's content.
+ *
+ * No framework, no build step, no external font or asset — the whole UI is
+ * three files and loads from a loopback socket with no network.
+ */
+
+* { box-sizing: border-box; }
+
+:root {
+  --bg: #f3f3f3;
+  --card: #ffffff;
+  --stroke: #e5e5e5;
+  --stroke-strong: #d2d2d2;
+  --ink: #1b1b1b;
+  --ink-soft: #5d5d5d;
+  --ink-faint: #8a8a8a;
+  --accent: #0f6cbd;
+  --accent-soft: #eff6fc;
+  --warn-bg: #fff8e6;
+  --warn-stroke: #f0d08a;
+  --warn-ink: #7a5800;
+  --good: #0f7b3f;
+  --radius: 8px;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── window chrome ─────────────────────────────────────────────────────── */
+
+.titlebar {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  user-select: none;
+}
+
+.titlebar .dots { display: flex; gap: 8px; margin-left: auto; }
+.titlebar .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--stroke-strong); }
+
+/* ── layout ────────────────────────────────────────────────────────────── */
+
+.app {
+  display: grid;
+  grid-template-columns: minmax(320px, 42%) 1fr;
+  gap: 56px;
+  align-items: center;
+  min-height: calc(100vh - 32px);
+  padding: 40px 56px 96px;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+@media (max-width: 900px) {
+  .app { grid-template-columns: 1fr; gap: 28px; padding: 24px 20px 96px; align-items: start; }
+}
+
+.pane-left { max-width: 420px; }
+
+h1 {
+  font-size: 40px;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  font-weight: 600;
+  margin: 0 0 20px;
+}
+
+@media (max-width: 900px) { h1 { font-size: 30px; } }
+
+.lede {
+  font-size: 15px;
+  color: var(--ink-soft);
+  margin: 0 0 24px;
+}
+
+.eyebrow {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0 0 12px;
+}
+
+.pane-right { min-width: 0; }
+
+/* ── cards ─────────────────────────────────────────────────────────────── */
+
+.list-wrap { position: relative; }
+.list { display: flex; flex-direction: column; gap: 8px; max-height: 70vh; overflow-y: auto; padding: 2px 2px 8px; scroll-behavior: smooth; }
+
+/*
+ * The scroll affordance.
+ *
+ * Applied by JS only when the list actually overflows AND is not scrolled
+ * to the end, so a short list is never faded and a finished scroll does not
+ * pretend there is more. A permanent gradient would dim the last card on
+ * every screen tall enough to show everything.
+ */
+.list-wrap::after {
+  content: "";
+  position: absolute; left: 0; right: 10px; bottom: 0; height: 56px;
+  background: linear-gradient(to bottom, rgba(243,243,243,0), var(--bg) 85%);
+  opacity: 0; transition: opacity 140ms ease; pointer-events: none;
+}
+.list-wrap.has-more::after { opacity: 1; }
+.list::-webkit-scrollbar { width: 10px; }
+.list::-webkit-scrollbar-thumb { background: #cdcdcd; border-radius: 6px; border: 3px solid var(--bg); }
+
+.card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--card);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+  box-shadow: var(--shadow);
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.card:hover { border-color: var(--stroke-strong); }
+.card.is-blocked { background: #fafafa; }
+.card.is-on { border-color: #b4d2ee; box-shadow: 0 0 0 1px #d6e7f6; }
+
+.icon {
+  width: 40px; height: 40px;
+  flex: 0 0 40px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: #f2f2f2;
+}
+
+.icon svg { width: 22px; height: 22px; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+.card-body { flex: 1; min-width: 0; }
+.card-title { font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.card-sub { color: var(--ink-soft); font-size: 13px; margin-top: 2px; }
+
+.tag {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--stroke-strong);
+  color: var(--ink-faint);
+  background: #fff;
+  white-space: nowrap;
+}
+.tag.local { color: var(--good); border-color: #bfe0cc; background: #f2faf5; }
+.tag.blocked { color: var(--warn-ink); border-color: var(--warn-stroke); background: var(--warn-bg); }
+.tag.trust { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-weight: 500; }
+
+/* ── checkbox ──────────────────────────────────────────────────────────── */
+
+.check {
+  appearance: none;
+  width: 20px; height: 20px;
+  flex: 0 0 20px;
+  border: 1px solid #868686;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background 100ms ease, border-color 100ms ease;
+}
+.check:hover { border-color: #1b1b1b; }
+.check:checked { background: var(--accent); border-color: var(--accent); }
+.check:checked::after {
+  content: "";
+  width: 11px; height: 6px;
+  border-left: 2px solid #fff;
+  border-bottom: 2px solid #fff;
+  transform: rotate(-45deg) translate(1px, -1px);
+}
+.check:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── callouts ──────────────────────────────────────────────────────────── */
+
+.note {
+  border: 1px solid var(--stroke);
+  background: #fff;
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  font-size: 13px;
+  color: var(--ink-soft);
+  margin-top: 12px;
+}
+.note.warn { background: var(--warn-bg); border-color: var(--warn-stroke); color: var(--warn-ink); }
+.note strong { color: inherit; }
+
+.link {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.link:hover { text-decoration: underline; }
+
+/* ── principles (about page) ───────────────────────────────────────────── */
+
+.principle { padding: 14px 0; border-bottom: 1px solid var(--stroke); }
+.principle:last-child { border-bottom: none; }
+.principle h3 { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
+.principle p { margin: 0; color: var(--ink-soft); font-size: 13px; }
+
+/* ── stats ─────────────────────────────────────────────────────────────── */
+
+.stats { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
+.stat {
+  background: #fff; border: 1px solid var(--stroke); border-radius: var(--radius);
+  padding: 10px 14px; min-width: 92px;
+}
+.stat b { display: block; font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
+.stat span { font-size: 11px; color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.05em; }
+
+/* ── forms (model page) ────────────────────────────────────────────────── */
+
+.field { margin-bottom: 14px; }
+.field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 5px; }
+.field .hint { font-weight: 400; color: var(--ink-faint); font-size: 12px; margin-left: 6px; }
+
+input[type="text"], select {
+  width: 100%;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid #868686;
+  border-bottom-width: 2px;
+  border-radius: 5px;
+}
+input[type="text"]:focus, select:focus { outline: none; border-bottom-color: var(--accent); }
+input[type="text"]:disabled, select:disabled { background: #f5f5f5; color: var(--ink-faint); border-color: var(--stroke-strong); }
+
+pre.env {
+  background: #1f1f1f; color: #e6e6e6; border-radius: 6px;
+  padding: 12px 14px; font-size: 12px; overflow-x: auto;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  margin: 10px 0 0;
+}
+
+/* ── job table ─────────────────────────────────────────────────────────── */
+
+.jobs { display: flex; flex-direction: column; gap: 6px; }
+.job {
+  display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center;
+  background: #fff; border: 1px solid var(--stroke); border-radius: 6px; padding: 10px 14px;
+}
+.job code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12.5px; font-weight: 600; }
+.job p { margin: 2px 0 0; font-size: 12.5px; color: var(--ink-soft); }
+.pill {
+  font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px;
+  background: #eef3f8; color: #28506f; border: 1px solid #d3e2ef; white-space: nowrap;
+}
+.pill.model { background: #f3eefb; color: #553a86; border-color: #ddd0f2; }
+
+/* ── bottom chrome ─────────────────────────────────────────────────────── */
+
+.chrome {
+  position: fixed; left: 0; right: 0; bottom: 0;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 20px;
+  pointer-events: none;
+}
+.chrome > * { pointer-events: auto; }
+.chrome-group { display: flex; gap: 8px; }
+
+.iconbtn {
+  width: 32px; height: 32px;
+  border: 1px solid var(--stroke);
+  background: #fdfdfd;
+  border-radius: 5px;
+  display: grid; place-items: center;
+  cursor: pointer;
+  color: var(--ink);
+}
+.iconbtn:hover:not(:disabled) { background: #f0f0f0; }
+.iconbtn:disabled { opacity: 0.4; cursor: default; }
+.iconbtn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.iconbtn.active { background: var(--accent-soft); border-color: #b4d2ee; color: var(--accent); }
+
+.steps { display: flex; gap: 6px; align-items: center; }
+.step-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--stroke-strong); }
+.step-dot.on { background: var(--accent); width: 20px; border-radius: 4px; }
+
+.btn {
+  font: inherit; font-size: 13px; font-weight: 600;
+  padding: 7px 18px; border-radius: 5px; cursor: pointer;
+  background: var(--accent); color: #fff; border: 1px solid transparent;
+}
+.btn:hover { background: #115ea3; }
+.btn.ghost { background: #fdfdfd; color: var(--ink); border-color: var(--stroke-strong); }
+.btn.ghost:hover { background: #f0f0f0; }
+
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

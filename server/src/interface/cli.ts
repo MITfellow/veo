@@ -4,6 +4,17 @@ import { configFromEnv, ConfigError, type Config } from '../substrate/config.js'
 import { CURRENT_SCHEMA_VERSION } from '../substrate/storage/migrations.js';
 import { registeredTypes } from '../substrate/events/registry.js';
 import { diffSnapshots, snapshotDigest } from '../substrate/projections/index.js';
+import { describeJobs } from '../cognition/registry.js';
+import { allConnectors } from '../capability/connectors.js';
+
+/** How the eleven cognitive jobs are currently being served (§33). */
+function jobsDetail(config: Config): string {
+  const described = describeJobs(config);
+  const onModel = described.filter((j) => j.strategy === 'model').length;
+  return onModel === 0
+    ? `${described.length} cognitive jobs, all on deterministic baselines`
+    : `${described.length} cognitive jobs, ${onModel} routed to a model`;
+}
 
 /**
  * The CLI (§53). M0 ships the skeleton plus the commands that need nothing
@@ -50,6 +61,8 @@ function doctor(io: CliIo, config: Config, json: boolean): number {
     { name: 'clock', ok: clockLooksSane(), detail: new Date().toISOString() },
     { name: 'schema', ok: true, detail: `migrations through v${CURRENT_SCHEMA_VERSION}` },
     { name: 'eventTypes', ok: true, detail: `${registeredTypes().length} types appendable` },
+    { name: 'jobs', ok: describeJobs(config).length === 11, detail: jobsDetail(config) },
+    { name: 'connectors', ok: true, detail: `${allConnectors().filter((c) => c.status === 'available').length} ready, ${allConnectors().filter((c) => c.status === 'blocked').length} blocked on network/OAuth` },
     // §2 and §6. This is a check, not a comment, because the whole build
     // depends on it staying true and a check fails loudly.
     { name: 'model', ok: true, detail: 'none configured — L1, the intended state of this build' },
@@ -153,6 +166,53 @@ function rebuild(io: CliIo, config: Config, json: boolean): number {
   }
 }
 
+/** `arish serve` — the Get Started surface and the local JSON API. */
+async function serve(argv: readonly string[], io: CliIo): Promise<number> {
+  const { createHttpServer, listen } = await import('./http.js');
+  const dataDirIndex = argv.indexOf('--data-dir');
+  const override = dataDirIndex >= 0 ? argv[dataDirIndex + 1] : undefined;
+
+  let config: Config;
+  try {
+    config = configFromEnv(io.env, override === undefined ? {} : { dataDir: override });
+  } catch (error) {
+    if (error instanceof ConfigError) {
+      io.err(error.message);
+      return 2;
+    }
+    throw error;
+  }
+
+  const substrate = createSubstrate({ dbPath: dbPathFor(config), timeZone: config.timeZone });
+  const hostIndex = argv.indexOf('--host');
+  const portIndex = argv.indexOf('--port');
+  const host = hostIndex >= 0 ? (argv[hostIndex + 1] ?? config.host) : config.host;
+  const port = portIndex >= 0 ? Number(argv[portIndex + 1]) : config.port;
+
+  const server = createHttpServer({
+    storage: substrate.storage,
+    config,
+    now: () => substrate.clock.now(),
+    eventCount: () => substrate.events.count(),
+  });
+
+  const bound = await listen(server, host, port);
+  io.out(`arish is listening on http://${bound.host}:${bound.port}`);
+  io.out('model: none configured — L1, the intended state of this build');
+  io.err('Press Ctrl+C to stop.');
+
+  // Resolve only when the server closes, so the process stays alive.
+  await new Promise<void>((resolve) => {
+    const stop = (): void => {
+      server.close(() => resolve());
+      substrate.close();
+    };
+    process.once('SIGINT', stop);
+    process.once('SIGTERM', stop);
+  });
+  return 0;
+}
+
 const HELP = `arish — the personal agent platform
 
 Usage: arish <command> [options]
@@ -166,6 +226,10 @@ Commands (M0):
 Commands (M1):
   vault <cmd>    init, status, set, get, list, forget, panic
                  run 'arish vault help' for detail
+
+Commands (onboarding, decision 008):
+  serve          the Get Started UI and local JSON API
+                 --host, --port (defaults 127.0.0.1:8787)
 
 Options:
   --json         machine-readable output on stdout
@@ -223,6 +287,7 @@ export function run(argv: readonly string[], io: CliIo = defaultIo): number {
  * than making every existing command return a promise it does not need.
  */
 export async function runAsync(argv: readonly string[], io: CliIo = defaultIo): Promise<number> {
+  if (argv[0] === 'serve') return serve(argv, io);
   if (argv[0] !== 'vault') return run(argv, io);
 
   const { runVault, ttyPrompt, closePrompt } = await import('./vault-cli.js');
