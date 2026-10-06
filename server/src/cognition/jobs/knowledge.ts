@@ -59,6 +59,23 @@ const FACT_PATTERNS: ReadonlyArray<{
   { re: /\b[Mm]y birthday is (?:on )?([\p{L}\d\s,]{4,24}?)(?:\.|,|$)/u, predicate: 'birthday', stability: 'stable', confidence: 0.9 },
 ];
 
+/**
+ * A capture may legitimately end in a full stop; a sentence always does.
+ *
+ * `I work at Acme.` captured "Acme." because the employer pattern allows a
+ * dot so that "Acme Inc." survives. Driving the CLI found it immediately
+ * and no test did, because every test asserted the predicate rather than
+ * reading the value. The rule: drop a trailing stop unless the final word
+ * is a known abbreviation, in which case the stop is part of the name.
+ */
+const ABBREVIATIONS = new Set(['inc', 'ltd', 'co', 'corp', 'plc', 'llc', 'gmbh', 'st', 'mt', 'jr', 'sr']);
+
+function trimSentenceStop(value: string | undefined): string | undefined {
+  if (value === undefined || !value.endsWith('.')) return value;
+  const lastWord = value.slice(0, -1).split(/\s+/).at(-1)?.toLowerCase() ?? '';
+  return ABBREVIATIONS.has(lastWord) ? value : value.slice(0, -1).trim();
+}
+
 export const extractJob: CognitiveJob<z.infer<typeof ExtractIn>, z.infer<typeof ExtractOut>> = {
   name: 'memory.extract',
   summary: 'Pull durable facts out of something the user said.',
@@ -72,7 +89,7 @@ export const extractJob: CognitiveJob<z.infer<typeof ExtractIn>, z.infer<typeof 
     for (const sentence of sentences(text)) {
       for (const pattern of FACT_PATTERNS) {
         const match = pattern.re.exec(sentence);
-        const captured = match?.[1]?.trim();
+        const captured = trimSentenceStop(match?.[1]?.trim());
         if (captured === undefined || captured.length === 0) continue;
         facts.push({
           subject: speaker,

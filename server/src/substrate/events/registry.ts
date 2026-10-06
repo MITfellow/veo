@@ -55,9 +55,64 @@ const FactSuperseded = z.object({
   factId: z.string().min(1),
   supersededBy: z.string().min(1),
   validTo: z.number().int(),
+  /** Present when consolidation did it; absent when a human did. */
+  reason: z.string().max(200).optional(),
 }).strict();
 
 const FactRetracted = z.object({ factId: z.string().min(1), reason: z.string() }).strict();
+
+/**
+ * A correction: the belief was wrong, the world did not change.
+ *
+ * Distinct from `fact.superseded` on purpose. Superseding closes *valid*
+ * time — "I moved to Berlin". Correcting closes *transaction* time —
+ * "I never lived in Berlin, you misheard". A store with one event for both
+ * cannot answer "what did you believe in March" without lying.
+ */
+const FactCorrected = z.object({
+  factId: z.string().min(1),
+  correctedBy: z.string().min(1),
+  reason: z.string().max(200),
+}).strict();
+
+const FactPinning = z.object({ factId: z.string().min(1), reason: z.string().max(200).default('') }).strict();
+
+const EntityRenamed = z.object({
+  entityId: z.string().min(1),
+  name: z.string().min(1),
+  /** The previous name, kept as an alias so old references still resolve. */
+  previousName: z.string().min(1),
+  normalizedPrevious: z.string().min(1),
+}).strict();
+
+const EntityMerged = z.object({
+  entityId: z.string().min(1),
+  canonicalId: z.string().min(1),
+  /** Names the absorbed entity answered to, which the canonical one inherits. */
+  aliases: z.array(z.object({ alias: z.string().min(1), normalized: z.string().min(1) }).strict()).default([]),
+}).strict();
+
+/**
+ * An item of content the user can ask to have forgotten.
+ *
+ * Metadata only. The content is sealed under the item's own key and lives
+ * in `item_blobs`, which is not a projection — no replay reconstructs
+ * ciphertext, and `rebuild` must not drop it. `bytes` is the sealed length,
+ * which leaks a rough size and nothing else.
+ */
+const ArtifactCreated = z.object({
+  itemId: z.string().min(1),
+  kind: z.enum(['note', 'capture', 'document', 'transcript']),
+  label: z.string().max(120),
+  keyId: z.string().min(1),
+  bytes: z.number().int().min(0),
+}).strict();
+
+const ArtifactDeleted = z.object({
+  itemId: z.string().min(1),
+  /** `shredded` means the key is gone. There is no other kind. */
+  how: z.literal('shredded'),
+}).strict();
 
 /**
  * The sealed plan (§22), as an event.
@@ -203,6 +258,13 @@ const SCHEMAS = new Map<EventType, PayloadSchema>([
   ['fact.asserted', FactAsserted as PayloadSchema],
   ['fact.superseded', FactSuperseded as PayloadSchema],
   ['fact.retracted', FactRetracted as PayloadSchema],
+  ['fact.corrected', FactCorrected as PayloadSchema],
+  ['fact.pinned', FactPinning as PayloadSchema],
+  ['fact.unpinned', FactPinning as PayloadSchema],
+  ['entity.renamed', EntityRenamed as PayloadSchema],
+  ['entity.merged', EntityMerged as PayloadSchema],
+  ['artifact.created', ArtifactCreated as PayloadSchema],
+  ['artifact.deleted', ArtifactDeleted as PayloadSchema],
   ['fact.used', FactUsed as PayloadSchema],
   ['entity.created', EntityCreated as PayloadSchema],
   ['vault.unlocked', VaultLifecycle as PayloadSchema],

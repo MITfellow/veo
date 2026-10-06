@@ -240,6 +240,46 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX tool_calls_status ON tool_calls (status);
     `,
   },
+  {
+    version: 7,
+    name: 'memory',
+    sql: `
+      -- A projection. An entity's former names stay resolvable: a note from
+      -- 2023 says "Acme", the company is now "Acme Global", and a question
+      -- about 2023 must still find it.
+      CREATE TABLE entity_aliases (
+        entity_id  TEXT NOT NULL,
+        alias      TEXT NOT NULL,
+        normalized TEXT NOT NULL,
+        source     TEXT NOT NULL,          -- renamed | merged | declared
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (entity_id, normalized)
+      );
+      CREATE INDEX entity_aliases_norm ON entity_aliases (normalized);
+
+      -- A projection. Metadata only: what exists, under which key, and
+      -- whether it has been shredded. The content is not here.
+      CREATE TABLE items (
+        id          TEXT PRIMARY KEY,
+        kind        TEXT NOT NULL,
+        label       TEXT NOT NULL,
+        key_id      TEXT NOT NULL,
+        bytes       INTEGER NOT NULL,
+        trust       TEXT NOT NULL,
+        created_at  INTEGER NOT NULL,
+        shredded_at INTEGER
+      );
+
+      -- NOT A PROJECTION. Ciphertext, sealed under the item's own key
+      -- (decision 006). No replay reconstructs it and "rebuild" must not
+      -- drop it. Shredding destroys the key in item_keys and leaves this
+      -- row behind as unreadable bytes — that is the point.
+      CREATE TABLE item_blobs (
+        id     TEXT PRIMARY KEY,
+        sealed BLOB NOT NULL
+      );
+    `,
+  },
 ];
 
 /** The schema version a fresh database lands on. */

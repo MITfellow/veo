@@ -103,8 +103,49 @@ function seedKnowledge(append: Append, index: number, now: () => number, budget:
     append({ type: 'fact.asserted', actor: 'user:ara', trust: 'USER', payload: { factId: next, subject: `person-${index}`, predicate: 'employer', object: `Org ${index} New`, validFrom: now(), validTo: null, basis: 'observed', confidence: 0.8, stability: 'slow', sensitivity: 'normal', sourceTrust: 'USER' } });
     append({ type: 'fact.superseded', actor: 'user:ara', trust: 'USER', payload: { factId, supersededBy: next, validTo: now() } });
   }
+  seedFactLifecycle(append, index, factId, budget);
+}
+
+/** The four events that only ever *update* a fact row. */
+function seedFactLifecycle(append: Append, index: number, factId: string, budget: () => boolean): void {
   if (index % 7 === 0 && budget()) {
     append({ type: 'fact.retracted', actor: 'user:ara', trust: 'USER', payload: { factId, reason: 'misheard' } });
+  }
+  if (index % 6 === 0 && budget()) {
+    append({ type: 'fact.corrected', actor: 'user:ara', trust: 'USER', payload: { factId, correctedBy: `fact-${index}-c`, reason: 'you misheard' } });
+  }
+  if (index % 9 === 0 && budget()) {
+    append({ type: 'fact.pinned', actor: 'user:ara', trust: 'USER', payload: { factId, reason: 'I am sure' } });
+  }
+  if (index % 18 === 0 && budget()) {
+    append({ type: 'fact.unpinned', actor: 'user:ara', trust: 'USER', payload: { factId, reason: 'less sure now' } });
+  }
+}
+
+/**
+ * Entity aliases and shreddable items — M2's two projections.
+ *
+ * Both are update-heavy for the same reason `tool_calls` is: an alias is
+ * written by a *rename*, not by the create, and an item's tombstone is
+ * written by a later event than the one that made it. A projector that
+ * handled only the first event of each pair would look right on a fresh
+ * build and lose the rest on replay.
+ */
+function seedMemory(append: Append, index: number, budget: () => boolean): void {
+  if (index % 2 === 0) {
+    append({ type: 'entity.renamed', actor: 'user:ara', trust: 'USER', payload: { entityId: `person-${index}`, name: `Person ${index} Renamed`, previousName: `Person ${index}`, normalizedPrevious: `person ${index}` } });
+  }
+  if (index % 5 === 0 && budget()) {
+    append({ type: 'entity.merged', actor: 'user:ara', trust: 'USER', payload: { entityId: `person-${index}`, canonicalId: `person-${index + 1}`, aliases: [{ alias: `Person ${index}`, normalized: `person ${index}` }] } });
+  }
+  if (!budget()) return;
+
+  const itemId = `item-${index}`;
+  append({ type: 'artifact.created', actor: 'agent', trust: 'DERIVED', payload: { itemId, kind: 'note', label: `note ${index}`, keyId: `item:${itemId}`, bytes: 64 + (index % 300) } });
+  // Some are forgotten later. The tombstone must survive a rebuild, or
+  // "forget" would silently undo itself on the next restore.
+  if (index % 8 === 0 && budget()) {
+    append({ type: 'artifact.deleted', actor: 'user:ara', trust: 'USER', payload: { itemId, how: 'shredded' } });
   }
 }
 
@@ -127,6 +168,7 @@ function seed(s: TestSubstrate, targetEvents: number): void {
     seedConversation(append, index, budget);
     if (budget()) seedToolCalls(append, index, budget);
     if (budget()) seedKnowledge(append, index, () => s.clock.now(), budget);
+    if (budget()) seedMemory(append, index, budget);
   }
 }
 

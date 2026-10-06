@@ -34,6 +34,8 @@ export const PROJECTION_TABLES = [
   'facts',
   'entities',
   'tool_calls',
+  'entity_aliases',
+  'items',
 ] as const;
 
 export type ProjectionTable = (typeof PROJECTION_TABLES)[number];

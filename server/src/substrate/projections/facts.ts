@@ -83,6 +83,14 @@ export function factsProjector(): Projector {
           storage.prepare(`UPDATE facts SET valid_to = ?, superseded_by = ?, status = 'superseded' WHERE id = ?`)
             .run(num(event, 'validTo', event.ts), str(event, 'supersededBy'), str(event, 'factId'));
           return;
+        case 'fact.corrected':
+          // The belief was wrong. Close transaction time and point at the
+          // replacement; valid time is deliberately untouched, because we
+          // are not claiming the world changed.
+          storage.prepare(
+            `UPDATE facts SET retracted_at = ?, superseded_by = ?, status = 'corrected' WHERE id = ?`,
+          ).run(event.ts, str(event, 'correctedBy'), str(event, 'factId'));
+          return;
         case 'fact.retracted':
           // The belief was wrong. Close transaction time only: valid_to
           // stays as it was, because we are not claiming the world changed.
@@ -102,7 +110,7 @@ export function factsProjector(): Projector {
 }
 
 export function entitiesProjector(): Projector {
-  const tables = ['entities'];
+  const tables = ['entities', 'entity_aliases'];
   return {
     name: 'entities',
     tables,
@@ -115,16 +123,81 @@ export function entitiesProjector(): Projector {
              VALUES (?,?,?,NULL,?,?)`,
           ).run(str(event, 'entityId'), str(event, 'kind'), str(event, 'name'), event.ts, event.ts);
           return;
-        case 'entity.renamed':
+        case 'entity.renamed': {
+          const id = str(event, 'entityId');
           storage.prepare('UPDATE entities SET name = ?, updated_at = ? WHERE id = ?')
-            .run(str(event, 'name'), event.ts, str(event, 'entityId'));
+            .run(str(event, 'name'), event.ts, id);
+          // The old name becomes an alias. A note from 2023 says "Acme";
+          // the company is now "Acme Global"; a question about 2023 must
+          // still find it.
+          addAlias(storage, id, str(event, 'previousName'), str(event, 'normalizedPrevious'), 'renamed', event.ts);
           return;
-        case 'entity.merged':
+        }
+        case 'entity.merged': {
+          const absorbed = str(event, 'entityId');
+          const canonical = str(event, 'canonicalId');
           storage.prepare('UPDATE entities SET canonical_id = ?, updated_at = ? WHERE id = ?')
-            .run(str(event, 'canonicalId'), event.ts, str(event, 'entityId'));
+            .run(canonical, event.ts, absorbed);
+          // The canonical entity inherits every name the absorbed one
+          // answered to, or the merge loses the ability to find it.
+          const aliases = event.payload['aliases'];
+          if (Array.isArray(aliases)) {
+            for (const entry of aliases) {
+              if (typeof entry !== 'object' || entry === null) continue;
+              const { alias, normalized } = entry as { alias?: unknown; normalized?: unknown };
+              if (typeof alias !== 'string' || typeof normalized !== 'string') continue;
+              addAlias(storage, canonical, alias, normalized, 'merged', event.ts);
+            }
+          }
           return;
+        }
         default:
           return;
+      }
+    },
+  };
+}
+
+function addAlias(
+  storage: Storage,
+  entityId: string,
+  alias: string,
+  normalized: string,
+  source: string,
+  at: number,
+): void {
+  if (alias === '' || normalized === '') return;
+  storage.prepare(
+    `INSERT OR IGNORE INTO entity_aliases (entity_id, alias, normalized, source, created_at) VALUES (?,?,?,?,?)`,
+  ).run(entityId, alias, normalized, source, at);
+}
+
+/**
+ * Items: what exists, under which key, and whether it has been shredded.
+ *
+ * Metadata only. The ciphertext is in `item_blobs`, which is not a
+ * projection. Shredding is a tombstone, not a delete — "we had this and it
+ * is gone" has to stay auditable after the content cannot be read.
+ */
+export function itemsProjector(): Projector {
+  const tables = ['items'];
+  return {
+    name: 'items',
+    tables,
+    reset: (storage) => clear(storage, tables),
+    apply(event, storage) {
+      if (event.type === 'artifact.created') {
+        storage.prepare(
+          `INSERT OR REPLACE INTO items (id, kind, label, key_id, bytes, trust, created_at, shredded_at)
+           VALUES (?,?,?,?,?,?,?,NULL)`,
+        ).run(
+          str(event, 'itemId'), str(event, 'kind'), str(event, 'label'),
+          str(event, 'keyId'), num(event, 'bytes', 0), event.trust, event.ts,
+        );
+        return;
+      }
+      if (event.type === 'artifact.deleted') {
+        storage.prepare('UPDATE items SET shredded_at = ? WHERE id = ?').run(event.ts, str(event, 'itemId'));
       }
     },
   };

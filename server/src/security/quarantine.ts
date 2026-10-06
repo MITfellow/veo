@@ -133,16 +133,49 @@ export class Quarantine {
    * about the content against a schema.
    */
   admit<T>(input: { content: string; source: string; kind: string }, schema: z.ZodType<T>, extract: Extractor<T>): Admission<T> {
-    const now = this.options.clock.now();
+    const held = this.hold(input);
+    return this.release(held, input, schema, extract(input.content));
+  }
+
+  /**
+   * The same channel, for an extractor that has to await something.
+   *
+   * A Cognitive Job is async because one day a model will serve it, and a
+   * model extracting from FOREIGN bytes is precisely the case the
+   * quarantine exists for. Forcing the sync signature would have pushed
+   * that call outside the channel, which is how a boundary quietly stops
+   * being one. The ordering is identical: content is held *before* the
+   * extractor runs, so a crash mid-extraction still leaves the bytes
+   * accounted for.
+   */
+  async admitAsync<T>(
+    input: { content: string; source: string; kind: string },
+    schema: z.ZodType<T>,
+    extract: (content: string) => Promise<ExtractionResult<T>>,
+  ): Promise<Admission<T>> {
+    const held = this.hold(input);
+    return this.release(held, input, schema, await extract(input.content));
+  }
+
+  /** Write the bytes to the side table. They are never returned from here. */
+  private hold(input: { content: string; source: string; kind: string }): { refId: string; bytes: number; at: number } {
+    const at = this.options.clock.now();
     const refId = `$VAR_${this.options.ids.ulid()}`;
     const bytes = Buffer.byteLength(input.content, 'utf8');
-
     this.options.storage.prepare(
       'INSERT INTO quarantined_content (ref_id, source, kind, content, created_at) VALUES (?,?,?,?,?)',
-    ).run(refId, input.source, input.kind, input.content, now);
-    this.options.events.entered(refId, input.source, bytes, now);
+    ).run(refId, input.source, input.kind, input.content, at);
+    this.options.events.entered(refId, input.source, bytes, at);
+    return { refId, bytes, at };
+  }
 
-    const raw = extract(input.content);
+  /** Validate what the extractor produced and let only that cross back. */
+  private release<T>(
+    held: { refId: string; bytes: number; at: number },
+    input: { content: string; source: string; kind: string },
+    schema: z.ZodType<T>,
+    raw: ExtractionResult<T>,
+  ): Admission<T> {
     if (!raw.ok) {
       throw new QuarantineError('extraction_failed', `Quarantine extraction failed: ${raw.error}`);
     }
@@ -159,8 +192,8 @@ export class Quarantine {
     assertNoPassthrough(parsed.data, input.content);
 
     const fields = fieldNames(parsed.data);
-    const ref: SymbolicRef = { id: refId, kind: input.kind, fields, bytes, source: input.source };
-    this.options.events.extracted(refId, input.kind, fields, now);
+    const ref: SymbolicRef = { id: held.refId, kind: input.kind, fields, bytes: held.bytes, source: input.source };
+    this.options.events.extracted(held.refId, input.kind, fields, held.at);
     return { ref, extraction: parsed.data };
   }
 

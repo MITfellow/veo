@@ -36,6 +36,24 @@ export interface CliIo {
   env: Record<string, string | undefined>;
 }
 
+/**
+ * `arish memory history … | grep -q X` crashed with EPIPE.
+ *
+ * `grep -q` exits the moment it matches, which closes the pipe under a
+ * still-writing process. Node's default is to raise that as an unhandled
+ * error event and kill the process with a stack trace — so a perfectly
+ * ordinary shell idiom made the CLI look broken. A tool that cannot be
+ * piped into `head` is not a Unix tool. Found by running the demo, not by
+ * a test.
+ */
+function ignoreEpipe(stream: NodeJS.WriteStream): void {
+  stream.on('error', (error: NodeJS.ErrnoException) => {
+    if (error.code !== 'EPIPE') throw error;
+  });
+}
+ignoreEpipe(process.stdout);
+ignoreEpipe(process.stderr);
+
 const defaultIo: CliIo = {
   out: (line) => void process.stdout.write(line + '\n'),
   err: (line) => void process.stderr.write(line + '\n'),
@@ -96,9 +114,19 @@ function status(io: CliIo, config: Config, json: boolean): number {
   const substrate = createSubstrate({ dbPath: dbPathFor(config) });
   try {
     const head = substrate.events.head();
+    const count = (table: string): number =>
+      substrate.storage.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get<{ n: number }>()?.n ?? 0;
     const payload = {
       dataDir: config.dataDir,
       events: substrate.events.count(),
+      // Memory lives in `status` rather than `doctor` on purpose: doctor
+      // answers "is this machine fit to run arish" and must work before
+      // there is a database at all, while these are facts about *this*
+      // installation's contents.
+      facts: count('facts'),
+      liveFacts: count("facts WHERE retracted_at IS NULL AND status = 'active'"),
+      entities: count('entities'),
+      items: count('items'),
       headSeq: head.seq,
       headHash: head.hash,
       schemaVersion: substrate.storage.userVersion(),
@@ -109,6 +137,7 @@ function status(io: CliIo, config: Config, json: boolean): number {
     emit(io, json, payload, [
       `data dir     ${payload.dataDir}`,
       `events       ${payload.events} (head seq ${payload.headSeq})`,
+      `memory       ${payload.liveFacts} live of ${payload.facts} facts, ${payload.entities} entities, ${payload.items} items`,
       `head hash    ${payload.headHash.slice(0, 16)}…`,
       `schema       v${payload.schemaVersion}`,
       `degradation  L1 — no model provider configured`,
@@ -218,6 +247,32 @@ async function serve(argv: readonly string[], io: CliIo): Promise<number> {
   return 0;
 }
 
+/** `arish memory …` — M2's surface. */
+async function memory(argv: readonly string[], io: CliIo): Promise<number> {
+  const { runMemory } = await import('./memory-cli.js');
+  const dataDirIndex = argv.indexOf('--data-dir');
+  const override = dataDirIndex >= 0 ? argv[dataDirIndex + 1] : undefined;
+
+  let config: Config;
+  try {
+    config = configFromEnv(io.env, override === undefined ? {} : { dataDir: override });
+  } catch (error) {
+    if (error instanceof ConfigError) {
+      io.err(error.message);
+      return 2;
+    }
+    throw error;
+  }
+
+  const substrate = createSubstrate({ dbPath: dbPathFor(config), timeZone: config.timeZone });
+  try {
+    const cleaned = argv.filter((a) => a !== '--data-dir' && a !== override);
+    return await runMemory(cleaned, { substrate, config }, { out: io.out, err: io.err });
+  } finally {
+    substrate.close();
+  }
+}
+
 const HELP = `arish — the personal agent platform
 
 Usage: arish <command> [options]
@@ -232,6 +287,11 @@ Commands (M1):
   vault <cmd>    init, status, set, get, list, forget, panic
                  run 'arish vault help' for detail
 
+Commands (M2):
+  memory <cmd>   add, list, recall, history, forget, entities,
+                 conflicts, consolidate
+                 run 'arish memory help' for detail
+
 Commands (onboarding, decision 008):
   serve          the Get Started UI and local JSON API
                  --host, --port (defaults 127.0.0.1:8787)
@@ -241,7 +301,7 @@ Options:
   --data-dir     override the data directory
 
 Later milestones add: init, start, replay, backup, restore,
-export, import, memory. They are absent rather than stubbed (§61).
+export, import. They are absent rather than stubbed (§61).
 `;
 
 /** Each command is a plain function of (io, config, json) → exit code. */
@@ -293,6 +353,7 @@ export function run(argv: readonly string[], io: CliIo = defaultIo): number {
  */
 export async function runAsync(argv: readonly string[], io: CliIo = defaultIo): Promise<number> {
   if (argv[0] === 'serve') return serve(argv, io);
+  if (argv[0] === 'memory') return memory(argv.slice(1), io);
   if (argv[0] !== 'vault') return run(argv, io);
 
   const { runVault, ttyPrompt, closePrompt } = await import('./vault-cli.js');
