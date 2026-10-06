@@ -22,6 +22,7 @@ import {
   sessionState,
   startSession,
 } from './browser-api.js';
+import type { RecordedEvent } from '../capability/browser/record.js';
 
 /**
  * The local HTTP surface (§53).
@@ -48,6 +49,9 @@ export interface HttpDeps {
   eventCount: () => number;
   /** Content digest, injected rather than imported: `interface/` has no crypto. */
   digest?: (input: string) => string;
+  /** Append a browsing event to the log. Browsing is audited or it is not run. */
+  appendEvent?: ((event: RecordedEvent) => void) | undefined;
+  nextId?: (() => string) | undefined;
   browser?: BrowserState;
   files?: FileStore;
   /** Root of the static UI. Defaults to `web/` beside the built output. */
@@ -104,7 +108,12 @@ function browserOf(deps: HttpDeps): BrowserState {
   if (deps.browser !== undefined) return deps.browser;
   let state = BROWSERS.get(deps);
   if (state === undefined) {
-    state = new BrowserState({ now: deps.now, digest: deps.digest ?? weakDigest });
+    state = new BrowserState({
+      now: deps.now,
+      digest: deps.digest ?? weakDigest,
+      append: deps.appendEvent,
+      nextId: deps.nextId,
+    });
     BROWSERS.set(deps, state);
   }
   return state;

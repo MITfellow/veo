@@ -3,6 +3,7 @@ import { BrowserError, BrowserSession, PlanSpecSchema } from '../capability/brow
 import { StaticDriver } from '../capability/browser/driver.js';
 import { ACTION_KINDS, ACTION_RISK, MIN_AUTONOMY, ActionSchema } from '../capability/browser/plan.js';
 import { DEMO_PAGES, DEMO_ORIGINS } from '../capability/browser/pages.js';
+import { BrowserRecorder, type RecordedEvent } from '../capability/browser/record.js';
 import type { ApiResponse } from './api.js';
 
 /**
@@ -36,6 +37,10 @@ const badRequest = (error: string, extra: Record<string, unknown> = {}): ApiResp
 export interface BrowserDeps {
   now: () => number;
   digest: (input: string) => string;
+  /** Append to the event log. Omitted in tests that only want the transcript. */
+  append?: ((event: RecordedEvent) => void) | undefined;
+  /** Fresh ids. Must come from outside: a projector may not mint one. */
+  nextId?: (() => string) | undefined;
 }
 
 interface LogEntry {
@@ -55,6 +60,7 @@ interface LogEntry {
 export class BrowserState {
   session: BrowserSession | null = null;
   autonomy = 2;
+  recorder: BrowserRecorder | null = null;
   readonly log: LogEntry[] = [];
   readonly driver = new StaticDriver();
 
@@ -65,20 +71,41 @@ export class BrowserState {
   start(autonomy: number): BrowserSession {
     this.autonomy = autonomy;
     this.log.length = 0;
+    // A new plan ends the previous run rather than abandoning it: a run
+    // with no terminal event is indistinguishable from one that crashed.
+    this.recorder?.finish('cancelled');
+    this.recorder = this.makeRecorder();
     this.session = new BrowserSession({
       driver: this.driver.fetch,
       now: this.deps.now,
       digest: this.deps.digest,
       autonomy,
       events: {
-        navigated: (url, _status, at) => this.log.push({ at, kind: 'navigate', detail: url, outcome: 'navigated' }),
-        observed: (url, n, at) =>
-          this.log.push({ at, kind: 'observe', detail: `${n} affordance(s) on ${url}`, outcome: 'observed' }),
-        acted: (a, _v, at) => this.log.push({ at, kind: a.kind, detail: describe(a), outcome: 'acted' }),
-        refused: (a, reason, code, at) => this.log.push({ at, kind: a.kind, detail: reason, outcome: 'refused', code }),
+        navigated: (url, _status, at) => {
+          this.log.push({ at, kind: 'navigate', detail: url, outcome: 'navigated' });
+          this.recorder?.navigated(url);
+        },
+        observed: (url, n, at) => {
+          this.log.push({ at, kind: 'observe', detail: `${n} affordance(s) on ${url}`, outcome: 'observed' });
+          this.recorder?.observed(url, n);
+        },
+        acted: (a, _v, at) => {
+          this.log.push({ at, kind: a.kind, detail: describe(a), outcome: 'acted' });
+          this.recorder?.acted(a);
+        },
+        refused: (a, reason, code, at) => {
+          this.log.push({ at, kind: a.kind, detail: reason, outcome: 'refused', code });
+          this.recorder?.refused(a, reason, code);
+        },
       },
     });
     return this.session;
+  }
+
+  private makeRecorder(): BrowserRecorder | null {
+    const { append, nextId } = this.deps;
+    if (append === undefined || nextId === undefined) return null;
+    return new BrowserRecorder(append, nextId(), nextId);
   }
 }
 
@@ -113,6 +140,8 @@ export function startSession(state: BrowserState, rawBody: unknown): ApiResponse
 
   const session = state.start(parsed.data.autonomy);
   const plan = session.commit(parsed.data.plan);
+  // Recorded before a page is read, which is the point of recording it.
+  state.recorder?.planned(plan, parsed.data.autonomy);
   return ok({
     plan,
     autonomy: parsed.data.autonomy,
@@ -135,6 +164,11 @@ export async function actInSession(state: BrowserState, rawBody: unknown): Promi
     return ok({ ok: true, ...observation, log: state.log });
   } catch (error) {
     if (!(error instanceof BrowserError)) throw error;
+    // A refusal the gate already recorded settles the call and both of
+    // these become no-ops. What is left is a refusal decided *after* the
+    // gate (which carries its code) and a genuine failure (which does not).
+    if (error.code === undefined) state.recorder?.failed(error.kind, error.message);
+    else state.recorder?.denied(error.code, error.message);
     // A refusal is a 200 with a refusal in it, not a transport error: the
     // request was well-formed and the answer is "no, and here is why".
     return ok({
@@ -157,6 +191,8 @@ function safeObservation(session: BrowserSession): Record<string, unknown> {
 
 /** Throw the session away. The next plan starts from nothing. */
 export function resetSession(state: BrowserState): ApiResponse {
+  state.recorder?.finish('cancelled');
+  state.recorder = null;
   state.session = null;
   state.log.length = 0;
   return ok({ active: false, log: [] });

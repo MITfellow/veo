@@ -49,7 +49,20 @@ export interface SessionOptions {
 }
 
 export class BrowserError extends Error {
-  constructor(readonly kind: 'no_plan' | 'refused' | 'no_page' | 'seal_broken' | 'unsafe_scheme', message: string) {
+  /**
+   * `code` is set when this is a *policy* refusal rather than a failure.
+   *
+   * Some refusals can only be decided after the gate has passed — an href
+   * is only known once the ref is dereferenced. Those still have to land in
+   * the audit trail as denials with their reason, not as generic errors,
+   * so the code travels with the throw instead of being guessed at the
+   * catch site.
+   */
+  constructor(
+    readonly kind: 'no_plan' | 'refused' | 'no_page' | 'seal_broken' | 'unsafe_scheme',
+    message: string,
+    readonly code?: string,
+  ) {
     super(message);
     this.name = 'BrowserError';
   }
@@ -162,7 +175,7 @@ export class BrowserSession {
     }
     const action = parsed.data;
     if (action.kind === 'navigate' && !isSafeScheme(action.url)) {
-      throw new BrowserError('unsafe_scheme', `Refusing ${action.url}: only http, https and file are navigable.`);
+      throw new BrowserError('unsafe_scheme', `Refusing ${action.url}: only http, https and file are navigable.`, 'origin_not_allowed');
     }
     return action;
   }
@@ -215,11 +228,11 @@ export class BrowserSession {
     }
     const resolved = resolveHref(target.href, this.view?.url ?? '');
     if (!isSafeScheme(resolved)) {
-      throw new BrowserError('unsafe_scheme', `Refusing ${target.ref}: '${schemeOf(resolved)}' is not navigable.`);
+      throw new BrowserError('unsafe_scheme', `Refusing ${target.ref}: '${schemeOf(resolved)}' is not navigable.`, 'origin_not_allowed');
     }
     const origin = originOf(resolved);
     if (!this.originAllowed(origin)) {
-      throw new BrowserError('refused', `${target.ref} leads to ${origin}, which the sealed plan does not allow.`);
+      throw new BrowserError('refused', `${target.ref} leads to ${origin}, which the sealed plan does not allow.`, 'origin_not_allowed');
     }
     return this.load(resolved);
   }

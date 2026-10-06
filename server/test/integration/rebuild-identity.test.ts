@@ -47,6 +47,47 @@ function seedConversation(append: Append, index: number, budget: () => boolean):
 }
 
 /**
+ * Tool calls, with all three terminal outcomes and one left open.
+ *
+ * `tool_calls` is an update-heavy projection: `invoked` writes the row and a
+ * later event mutates it. A projector that handled only the insert would
+ * look perfect on a fresh build and lose every outcome on replay, which is
+ * precisely the class of bug this gate exists to catch. The deliberately
+ * unterminated call is here too — an interrupted run is a real state and
+ * must survive a rebuild exactly as it was.
+ */
+function seedToolCalls(append: Append, index: number, budget: () => boolean): void {
+  const rid = `run-${index}`;
+  const invoke = (n: number, tier: 'observe' | 'interact' | 'effect'): string => {
+    const callId = `call-${index}-${n}`;
+    append({
+      type: 'tool.invoked', actor: 'browser', trust: 'TOOL', runId: rid,
+      payload: { callId, tool: 'browser', action: `open https://site-${index}.example/${n}`, target: `https://site-${index}.example`, tier },
+    });
+    return callId;
+  };
+
+  const ok = invoke(0, 'observe');
+  if (budget()) {
+    append({ type: 'tool.succeeded', actor: 'browser', trust: 'TOOL', runId: rid, payload: { callId: ok, tool: 'browser', detail: `${index % 9} affordance(s)` } });
+  }
+  if (index % 3 === 0 && budget()) {
+    const denied = invoke(1, 'effect');
+    if (budget()) {
+      append({ type: 'tool.denied', actor: 'browser', trust: 'TOOL', runId: rid, payload: { callId: denied, tool: 'browser', code: 'rule_of_two', reason: 'private data plus untrusted content plus an outbound effect' } });
+    }
+  }
+  if (index % 5 === 0 && budget()) {
+    const failed = invoke(2, 'interact');
+    if (budget()) {
+      append({ type: 'tool.failed', actor: 'browser', trust: 'TOOL', runId: rid, payload: { callId: failed, tool: 'browser', kind: 'no_page', detail: 'no transport in this build' } });
+    }
+  }
+  // Left open on purpose: a process that died mid-call.
+  if (index % 11 === 0 && budget()) invoke(3, 'observe');
+}
+
+/**
  * Facts and entities — including the two mutation paths a naive projector
  * misses. Inserts alone look correct on a fresh build and wrong on replay.
  */
@@ -84,6 +125,7 @@ function seed(s: TestSubstrate, targetEvents: number): void {
 
   for (let index = 0; budget(); index++) {
     seedConversation(append, index, budget);
+    if (budget()) seedToolCalls(append, index, budget);
     if (budget()) seedKnowledge(append, index, () => s.clock.now(), budget);
   }
 }

@@ -129,6 +129,61 @@ export function runsProjector(): Projector {
   };
 }
 
+/**
+ * Every tool call, with its outcome.
+ *
+ * Decision 010: a browsing session is a run and each action is a tool call,
+ * so this one projector audits browsing today and every tool that comes
+ * after it. `invoked` writes the row; the terminal event updates it, which
+ * means an interrupted process leaves a row still reading `invoked` — and
+ * that is the truth, not a gap.
+ */
+export function toolCallsProjector(): Projector {
+  const tables = ['tool_calls'];
+  return {
+    name: 'tool_calls',
+    tables,
+    reset: (storage) => clear(storage, tables),
+    apply(event, storage) {
+      const callId = payloadString(event, 'callId');
+      if (callId === '') return;
+      if (event.type === 'tool.invoked') {
+        storage.prepare(
+          `INSERT OR REPLACE INTO tool_calls
+             (call_id, run_id, tool, action, target, tier, status, code, detail, started_at, ended_at)
+           VALUES (?,?,?,?,?,?,'invoked',NULL,NULL,?,NULL)`,
+        ).run(
+          callId,
+          event.runId,
+          payloadString(event, 'tool'),
+          payloadString(event, 'action'),
+          event.payload['target'] ?? null,
+          payloadString(event, 'tier'),
+          event.ts,
+        );
+        return;
+      }
+      const status = TERMINAL[event.type];
+      if (status === undefined) return;
+      storage.prepare(
+        'UPDATE tool_calls SET status = ?, code = ?, detail = ?, ended_at = ? WHERE call_id = ?',
+      ).run(
+        status,
+        event.payload['code'] ?? null,
+        payloadString(event, 'reason') || payloadString(event, 'detail') || payloadString(event, 'kind'),
+        event.ts,
+        callId,
+      );
+    },
+  };
+}
+
+const TERMINAL: Record<string, string | undefined> = {
+  'tool.succeeded': 'succeeded',
+  'tool.failed': 'failed',
+  'tool.denied': 'denied',
+};
+
 export function capturesProjector(): Projector {
   const tables = ['captures'];
   return {

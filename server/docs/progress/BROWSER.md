@@ -4,7 +4,7 @@ Out of band, like the onboarding work before it, and for the same reason:
 the user asked for it directly. Decision 009 holds the argument; this note
 holds the inventory, the gaps, and the things I am not sure about.
 
-**Verified by running:** `npm run check` → **362 tests, 28 files, 11.9 s**
+**Verified by running:** `npm run check` → **372 tests, 29 files, 10.2 s**
 (60 s budget), `tsc --noEmit` clean, `eslint . --max-warnings 0` clean,
 every function within the complexity-10 limit. Then driven in headless
 Chromium through eleven screenshots with **zero console errors**.
@@ -87,6 +87,7 @@ you are trusting on faith.
 | `test/unit/browser-html.test.ts` | 25 | entities, tokenizer, parser, the view |
 | `test/adversarial/browser.test.ts` | 74 | the hostile corpus and every gate |
 | `test/integration/browser-api.test.ts` | 19 | the HTTP surface end to end |
+| `test/integration/browser-scale.test.ts` | 10 | **100 sessions**, replay identity, the audit trail |
 
 `test/fixtures/hostile-pages.ts` holds **15 attack shapes** — direct
 instruction, hidden text, comments, an instruction as a link label, an
@@ -102,13 +103,41 @@ not a defence, it is an outage. The suite asserts it reads cleanly.
 
 ---
 
+## Audited (decision 010)
+
+**Closed since this note was first written.** A browsing session is a
+**run**; each action is a **tool call**. No new event types — five members
+of the closed union got their schemas registered — and one new projection,
+`tool_calls`. Browsing is audited today and every tool after it inherits
+the audit.
+
+`run.planned` is appended **before a page is read**, carrying the sealed
+plan and its seal, so the log shows what the agent agreed to do before it
+saw the thing that might have wanted otherwise.
+
+Nothing in the log carries page prose. `action` is `open https://host`,
+`target` is an origin or a ref, `detail` is a count. The log is replayed
+*into* the privileged path, so a record is an input to it — and decision
+007 already settled that a summary of FOREIGN content is FOREIGN.
+
+### At 100 sessions
+
+`browser-scale.test.ts` runs 100 full sessions — reading, wandering
+off-origin, tripping the Rule of Two — through the real stack into a real
+log, then drops every projection and replays:
+
+| Property | Result |
+| --- | --- |
+| Replay → byte-identical projections | identical digest, empty per-table diff |
+| Hash chain | intact across every session |
+| Runs opened and closed | 100 / 100, none dangling |
+| Tool calls reaching a terminal state | all; `invoked` count 0 |
+| Denials carrying a code | `rule_of_two` 25, `origin_not_allowed` 34 |
+| Hostile prose in the log | none of 7 phrases |
+| Wall clock | ~1.2 s for the whole workload |
+
 ## Deferred
 
-- **Browser events are not appended to the event log yet.** The session
-  emits a `SessionEvents` record per step and the API keeps a transcript,
-  but nothing reaches `substrate/events`. Decision 009 claims a browsing
-  session is replayable; today it is only *observable*. Wiring this needs
-  event types in the closed registry, which is a migration.
 - **No live driver, by §2.** Deliberate, and the demo corpus exists so the
   absence is the only thing you cannot see.
 - **Interaction against a static document does not move the page.** `type`,

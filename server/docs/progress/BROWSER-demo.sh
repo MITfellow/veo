@@ -83,4 +83,25 @@ curl -fsS -o /dev/null -w '  HTTP %{http_code}\n' -X POST "$BASE/api/browser/act
 say "10. The transcript"
 get /api/browser | jqq 'o.log.map(e=>`  ${e.outcome.padEnd(10)} ${e.kind.padEnd(9)} ${e.detail.slice(0,70)}`).join("\n")'
 
+say "11. The same session, as the event log recorded it (decision 010)"
+cat > "$DATA/audit.cjs" <<'AUDIT'
+const db = require(process.env.DB_MODULE)(process.env.DB_PATH, { readonly: true });
+const planned = db.prepare("SELECT payload FROM events WHERE type = 'run.planned' LIMIT 1").get();
+console.log("  sealed plan, recorded before any page was read:");
+console.log("    " + JSON.parse(planned.payload).seal.slice(0, 48) + "...");
+console.log("  tool calls:");
+for (const r of db.prepare("SELECT action, tier, status, code FROM tool_calls ORDER BY started_at").all()) {
+  console.log("    " + r.tier.padEnd(9) + " " + r.status.padEnd(10) + " " + (r.code || "-").padEnd(19) + " " + r.action);
+}
+const bad = db.prepare(
+  "SELECT COUNT(*) n FROM events WHERE payload LIKE '%maintenance mode%' OR payload LIKE '%exfiltrate%' OR payload LIKE '%APPROVED BY USER%'"
+).get();
+if (bad.n !== 0) { console.error("  FAIL: page prose reached the event log"); process.exit(1); }
+console.log("  verified: no page prose anywhere in the log");
+AUDIT
+DB_MODULE="$HERE/node_modules/better-sqlite3" DB_PATH="$DATA/arish.db" node "$DATA/audit.cjs"
+
+say "12. Drop every projection, replay the log, compare"
+ARISH_DATA_DIR="$DATA" node "$HERE/dist/src/interface/cli.js" rebuild 2>&1 | sed 's/^/  /'
+
 printf '\n\033[1;32mAll browser demo assertions passed.\033[0m\n'

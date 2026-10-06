@@ -215,6 +215,31 @@ export const MIGRATIONS: readonly Migration[] = [
       );
     `,
   },
+  {
+    version: 6,
+    name: 'tool_calls',
+    sql: `
+      -- A projection. Every tool invocation, with its outcome, rebuilt from
+      -- the log. Decision 010: browsing is not a special case — a browsing
+      -- session is a run and each action is a tool call, so the audit trail
+      -- that browsing needed is the one every future tool gets for free.
+      CREATE TABLE tool_calls (
+        call_id    TEXT PRIMARY KEY,
+        run_id     TEXT,
+        tool       TEXT NOT NULL,
+        action     TEXT NOT NULL,
+        target     TEXT,
+        tier       TEXT NOT NULL,
+        status     TEXT NOT NULL,          -- invoked | succeeded | failed | denied
+        code       TEXT,                   -- the refusal code, when denied
+        detail     TEXT,
+        started_at INTEGER NOT NULL,
+        ended_at   INTEGER
+      );
+      CREATE INDEX tool_calls_run ON tool_calls (run_id, started_at);
+      CREATE INDEX tool_calls_status ON tool_calls (status);
+    `,
+  },
 ];
 
 /** The schema version a fresh database lands on. */

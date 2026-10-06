@@ -3,9 +3,10 @@
 The file Appendix F asks for. Read this first; it is the only place that
 claims to say where things stand.
 
-**Last verified by running:** `npm run check` → **362 tests, 28 files, 11.9s**
+**Last verified by running:** `npm run check` → **372 tests, 29 files, 10.2s**
 (60s budget), `tsc --noEmit` exit 0, `eslint . --max-warnings 0` clean.
-Then driven in headless Chromium, eleven screenshots, zero console errors.
+Driven in headless Chromium (eleven screenshots, zero console errors) and
+against the real `arish serve` binary over HTTP.
 
 ---
 
@@ -16,7 +17,8 @@ Then driven in headless Chromium, eleven screenshots, zero console errors.
 | **M0 — Substrate** | **Complete.** Committed `dbbc465`. |
 | **M1 — Security** | **Complete.** Committed `862c919`. |
 | **Onboarding + Cognitive Jobs** | **Complete, out of band.** Decision 008 — the milestone order was broken deliberately and recorded. See `ONBOARDING.md`. |
-| **Browser use** | **Complete, out of band.** Decision 009 + its addendum. See `BROWSER.md`. HTML stack, agent view, sealed plan, 15-shape attack corpus, a browser UI. Events are **not** yet appended to the log — the one real gap. |
+| **Browser use** | **Complete, out of band.** Decisions 009 + 010. See `BROWSER.md`. HTML stack, agent view, sealed plan, 15-shape attack corpus, a browser UI, and a full audit trail. |
+| **Tool audit trail** | **Complete.** Decision 010 — browsing is a run, an action is a tool call. Schema v6, `tool_calls` projection. Proven at **100 sessions**: replay is byte-identical, the chain holds, no run dangles. |
 | M2 — Memory | **Not started. Next.** |
 | M3 → M10 | Not started, not scaffolded (§61). |
 
@@ -36,19 +38,11 @@ against a fake provider.
 
 ## The next concrete action
 
-**Append browser events to the event log, then begin M2.**
+**Begin M2 — Memory, by writing its test list before any implementation.**
 
-`BROWSER.md` is honest that this is missing. The session emits a
-`SessionEvents` record per step and the API keeps an in-memory transcript,
-but nothing reaches `substrate/events`, so decision 009's claim that a
-browsing session is *replayable* is currently only a claim that it is
-*observable*. Closing it means four new types in the closed event registry
-(`browser.planned`, `browser.navigated`, `browser.acted`,
-`browser.refused`) and therefore a migration — which is exactly why it was
-not bolted on at the end.
-
-Then: **begin M2 — Memory, by writing its test list before any
-implementation.**
+The audit gap is closed (decision 010) and nothing is outstanding ahead of
+M2. The substrate now carries schema v6 and a `tool_calls` projection, both
+inside the rebuild-identity gate.
 
 The onboarding detour is closed. M2 now inherits working `memory.extract`,
 `memory.consolidate` and `entity.resolve` baselines, so its surface is
@@ -108,7 +102,14 @@ Both demos run the real built binary against real SQLite files in `/tmp`.
   shipped five more into a green suite — a plan that could never take its
   first step, a click that escaped an origin pin, `<button>` mis-tiered as
   an interaction, a page title that was always empty, and an approval
-  checkbox that never showed whether you had approved. Drive the thing.
+  checkbox that never showed whether you had approved. Then the audit
+  trail shipped one more into a green suite — a refusal written onto the
+  *previous* action's row, which four `curl`s against a real server found
+  immediately. Drive the thing.
+- **A projection added to `PROJECTION_TABLES` must be fed by the 10k
+  workload.** The M0 gate asserts every table has rows *before* comparing,
+  precisely so a new empty table cannot pass by comparing emptiness to
+  emptiness. It has now caught a real problem twice.
 - **`.toThrow()` with no argument asserts almost nothing.** A browser test
   that proved a click could not leave its origin was passing because the
   static driver happened not to hold the target page. The hole it was

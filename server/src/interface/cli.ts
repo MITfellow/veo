@@ -195,6 +195,10 @@ async function serve(argv: readonly string[], io: CliIo): Promise<number> {
     now: () => substrate.clock.now(),
     eventCount: () => substrate.events.count(),
     digest: (input) => substrate.crypto.sha256(input),
+    nextId: () => substrate.ids.ulid(),
+    appendEvent: (event) => {
+      substrate.events.append(event);
+    },
   });
 
   const bound = await listen(server, host, port);

@@ -58,6 +58,60 @@ const FactSuperseded = z.object({
 }).strict();
 
 const FactRetracted = z.object({ factId: z.string().min(1), reason: z.string() }).strict();
+
+/**
+ * The sealed plan (§22), as an event.
+ *
+ * Recorded before anything is read, which is the whole point: the log shows
+ * what the agent agreed to do *before* it saw the page that might have
+ * wanted it to do something else. The seal makes tampering afterwards
+ * detectable without re-deriving anything.
+ */
+const RunPlanned = z.object({
+  goal: z.string().min(1),
+  allowedKinds: z.array(z.string().min(1)),
+  maxSteps: z.number().int().min(1),
+  allowedOrigins: z.array(z.string()),
+  carriesPrivateData: z.boolean(),
+  autonomy: z.number().int().min(0).max(4),
+  seal: z.string().min(1),
+}).strict();
+
+/**
+ * A tool call. Decision 010: browsing is not a special case.
+ *
+ * `action` is a short human-readable summary and `target` is a *bounded*
+ * reference — an origin, a ref, a form index. Never page prose: the log is
+ * read by the privileged path on replay, so anything that could not be
+ * trusted in a prompt must not be in here either.
+ */
+const ToolInvoked = z.object({
+  callId: z.string().min(1),
+  tool: z.string().min(1),
+  action: z.string().max(200),
+  target: z.string().max(200).nullable().default(null),
+  tier: z.enum(['observe', 'interact', 'effect']),
+}).strict();
+
+const ToolSucceeded = z.object({
+  callId: z.string().min(1),
+  tool: z.string().min(1),
+  detail: z.string().max(200).default(''),
+}).strict();
+
+const ToolFailed = z.object({
+  callId: z.string().min(1),
+  tool: z.string().min(1),
+  kind: z.string().min(1),
+  detail: z.string().max(400).default(''),
+}).strict();
+
+const ToolDenied = z.object({
+  callId: z.string().min(1),
+  tool: z.string().min(1),
+  code: z.string().min(1),
+  reason: z.string().max(400),
+}).strict();
 const FactUsed = z.object({ factId: z.string().min(1), usedFor: z.string() }).strict();
 
 const EntityCreated = z.object({
@@ -141,6 +195,11 @@ const SCHEMAS = new Map<EventType, PayloadSchema>([
   ['capture.received', CaptureReceived as PayloadSchema],
   ['run.started', RunStarted as PayloadSchema],
   ['run.finished', RunFinished as PayloadSchema],
+  ['run.planned', RunPlanned as PayloadSchema],
+  ['tool.invoked', ToolInvoked as PayloadSchema],
+  ['tool.succeeded', ToolSucceeded as PayloadSchema],
+  ['tool.failed', ToolFailed as PayloadSchema],
+  ['tool.denied', ToolDenied as PayloadSchema],
   ['fact.asserted', FactAsserted as PayloadSchema],
   ['fact.superseded', FactSuperseded as PayloadSchema],
   ['fact.retracted', FactRetracted as PayloadSchema],
