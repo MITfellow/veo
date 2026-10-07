@@ -195,15 +195,40 @@ function rebuild(io: CliIo, config: Config, json: boolean): number {
   }
 }
 
-/** `arish serve` — the Get Started surface and the local JSON API. */
-async function serve(argv: readonly string[], io: CliIo): Promise<number> {
-  const { createHttpServer, listen } = await import('./http.js');
-  const dataDirIndex = argv.indexOf('--data-dir');
-  const override = dataDirIndex >= 0 ? argv[dataDirIndex + 1] : undefined;
+/**
+ * `arish tools|run|approvals` — M3's surface.
+ *
+ * The vault is constructed but not unlocked: every built-in except the
+ * item tools works locked, and a command that demanded a passphrase to
+ * list tools would be the kind of friction that teaches people to leave
+ * the vault open.
+ */
+async function orchestration(argv: readonly string[], io: CliIo): Promise<number> {
+  const { runRun } = await import('./run-cli.js');
+  const { makeVault } = await import('./vault-cli.js');
+  const { readFileSync } = await import('node:fs');
 
-  let config: Config;
+  const config = resolveConfig(argv, io);
+  if (typeof config === 'number') return config;
+
+  const substrate = createSubstrate({ dbPath: dbPathFor(config), timeZone: config.timeZone });
   try {
-    config = configFromEnv(io.env, override === undefined ? {} : { dataDir: override });
+    const vault = makeVault({
+      storage: substrate.storage, clock: substrate.clock, config, log: substrate.events,
+    });
+    return await runRun(argv, { substrate, config, vault }, { out: io.out, err: io.err },
+      (path) => readFileSync(path, 'utf8'));
+  } finally {
+    substrate.close();
+  }
+}
+
+/** The `--data-dir` dance, which every async command was repeating. */
+function resolveConfig(argv: readonly string[], io: CliIo): Config | number {
+  const at = argv.indexOf('--data-dir');
+  const override = at >= 0 ? argv[at + 1] : undefined;
+  try {
+    return configFromEnv(io.env, override === undefined ? {} : { dataDir: override });
   } catch (error) {
     if (error instanceof ConfigError) {
       io.err(error.message);
@@ -211,58 +236,16 @@ async function serve(argv: readonly string[], io: CliIo): Promise<number> {
     }
     throw error;
   }
-
-  const substrate = createSubstrate({ dbPath: dbPathFor(config), timeZone: config.timeZone });
-  const hostIndex = argv.indexOf('--host');
-  const portIndex = argv.indexOf('--port');
-  const host = hostIndex >= 0 ? (argv[hostIndex + 1] ?? config.host) : config.host;
-  const port = portIndex >= 0 ? Number(argv[portIndex + 1]) : config.port;
-
-  const server = createHttpServer({
-    storage: substrate.storage,
-    config,
-    now: () => substrate.clock.now(),
-    eventCount: () => substrate.events.count(),
-    digest: (input) => substrate.crypto.sha256(input),
-    nextId: () => substrate.ids.ulid(),
-    appendEvent: (event) => {
-      substrate.events.append(event);
-    },
-  });
-
-  const bound = await listen(server, host, port);
-  io.out(`arish is listening on http://${bound.host}:${bound.port}`);
-  io.out('model: none configured — L1, the intended state of this build');
-  io.err('Press Ctrl+C to stop.');
-
-  // Resolve only when the server closes, so the process stays alive.
-  await new Promise<void>((resolve) => {
-    const stop = (): void => {
-      server.close(() => resolve());
-      substrate.close();
-    };
-    process.once('SIGINT', stop);
-    process.once('SIGTERM', stop);
-  });
-  return 0;
 }
 
 /** `arish memory …` — M2's surface. */
 async function memory(argv: readonly string[], io: CliIo): Promise<number> {
   const { runMemory } = await import('./memory-cli.js');
-  const dataDirIndex = argv.indexOf('--data-dir');
-  const override = dataDirIndex >= 0 ? argv[dataDirIndex + 1] : undefined;
+  const at = argv.indexOf('--data-dir');
+  const override = at >= 0 ? argv[at + 1] : undefined;
 
-  let config: Config;
-  try {
-    config = configFromEnv(io.env, override === undefined ? {} : { dataDir: override });
-  } catch (error) {
-    if (error instanceof ConfigError) {
-      io.err(error.message);
-      return 2;
-    }
-    throw error;
-  }
+  const config = resolveConfig(argv, io);
+  if (typeof config === 'number') return config;
 
   const substrate = createSubstrate({ dbPath: dbPathFor(config), timeZone: config.timeZone });
   try {
@@ -291,6 +274,13 @@ Commands (M2):
   memory <cmd>   add, list, recall, history, forget, entities,
                  conflicts, consolidate
                  run 'arish memory help' for detail
+
+Commands (M3):
+  tools          every tool, with the rung and capabilities it needs
+  run <plan>     execute a sealed plan through the gate chain
+                 --dry-run, --autonomy N, --trust T
+  approvals      what the agent is waiting to be told
+                 approvals grant|deny <id>
 
 Commands (onboarding, decision 008):
   serve          the Get Started UI and local JSON API
@@ -351,9 +341,24 @@ export function run(argv: readonly string[], io: CliIo = defaultIo): number {
  * async — Argon2id and WebCrypto both are — so it gets its own door rather
  * than making every existing command return a promise it does not need.
  */
+/**
+ * The async subsystems, as a table rather than an if-chain.
+ *
+ * Each milestone has added one door here; a chain of `if`s means the
+ * routing complexity grows with the product, and the router is the one
+ * place that must stay readable.
+ */
+const SUBSYSTEMS: Record<string, (argv: readonly string[], io: CliIo) => Promise<number>> = {
+  serve: async (argv, io) => (await import('./serve.js')).serve(argv, io),
+  memory: (argv, io) => memory(argv.slice(1), io),
+  tools: orchestration,
+  run: orchestration,
+  approvals: orchestration,
+};
+
 export async function runAsync(argv: readonly string[], io: CliIo = defaultIo): Promise<number> {
-  if (argv[0] === 'serve') return serve(argv, io);
-  if (argv[0] === 'memory') return memory(argv.slice(1), io);
+  const subsystem = SUBSYSTEMS[argv[0] ?? ''];
+  if (subsystem !== undefined) return subsystem(argv, io);
   if (argv[0] !== 'vault') return run(argv, io);
 
   const { runVault, ttyPrompt, closePrompt } = await import('./vault-cli.js');

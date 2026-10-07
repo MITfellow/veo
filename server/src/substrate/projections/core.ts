@@ -20,6 +20,11 @@ function clear(storage: Storage, tables: readonly string[]): void {
   for (const table of tables) storage.prepare(`DELETE FROM ${table}`).run();
 }
 
+function payloadNumber(event: StoredEvent, key: string): number {
+  const value = event.payload[key];
+  return typeof value === 'number' ? value : 0;
+}
+
 function payloadString(event: StoredEvent, key: string): string {
   const value = event.payload[key];
   return typeof value === 'string' ? value : '';
@@ -205,6 +210,53 @@ export function capturesProjector(): Projector {
         event.ts,
         event.sessionId,
       );
+    },
+  };
+}
+
+/**
+ * Approvals (§30).
+ *
+ * The row is written by the request and mutated by whatever settled it, so
+ * a pending approval is a real state rather than an absence — which is what
+ * lets `arish approvals` show you what the agent is waiting on instead of
+ * leaving it stuck silently.
+ */
+export function approvalsProjector(): Projector {
+  const tables = ['approvals'];
+  const SETTLED: Readonly<Record<string, string>> = {
+    'approval.granted': 'granted',
+    'approval.denied': 'denied',
+    'approval.expired': 'expired',
+  };
+  return {
+    name: 'approvals',
+    tables,
+    reset: (storage) => clear(storage, tables),
+    apply(event, storage) {
+      if (event.type === 'approval.requested') {
+        const triple = event.payload['triple'];
+        const flag = (key: string): number => {
+          const value = (triple as Record<string, unknown> | undefined)?.[key];
+          return value === true ? 1 : 0;
+        };
+        storage.prepare(
+          `INSERT OR REPLACE INTO approvals
+             (id, run_id, step_seal, tool, action, needs, untrusted, sensitive, external,
+              status, requested_at, expires_at, settled_at, settled_by)
+           VALUES (?,?,?,?,?,?,?,?,?, 'pending', ?, ?, NULL, NULL)`,
+        ).run(
+          payloadString(event, 'approvalId'), event.runId,
+          payloadString(event, 'stepSeal'), payloadString(event, 'tool'), payloadString(event, 'action'),
+          payloadNumber(event, 'needs'), flag('untrustedInput'), flag('sensitiveAccess'), flag('externalChange'),
+          event.ts, payloadNumber(event, 'expiresAt'),
+        );
+        return;
+      }
+      const status = SETTLED[event.type];
+      if (status === undefined) return;
+      storage.prepare('UPDATE approvals SET status = ?, settled_at = ?, settled_by = ? WHERE id = ?')
+        .run(status, event.ts, payloadString(event, 'by'), payloadString(event, 'approvalId'));
     },
   };
 }

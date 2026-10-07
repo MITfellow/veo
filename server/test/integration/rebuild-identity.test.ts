@@ -88,6 +88,47 @@ function seedToolCalls(append: Append, index: number, budget: () => boolean): vo
 }
 
 /**
+ * Approvals in all four terminal shapes (M3 §4).
+ *
+ * Every settlement path has to appear here, because a rebuild that lost a
+ * *denial* would silently re-open a question the user already answered —
+ * the one failure mode in this table that creates an action rather than
+ * losing a record.
+ */
+function seedApprovals(append: Append, index: number, now: () => number, budget: () => boolean): void {
+  const approvalId = `approval-${index}`;
+  const rid = `run-${index}`;
+  append({
+    type: 'approval.requested', actor: 'agent', trust: 'DERIVED', runId: rid,
+    payload: {
+      approvalId,
+      stepSeal: `seal-${index}`,
+      tool: index % 2 === 0 ? 'memory.assert' : 'http.fetch',
+      action: `step ${index % 5} of run ${index}`,
+      needs: (index % 4) + 1,
+      triple: {
+        untrustedInput: index % 2 === 0,
+        sensitiveAccess: index % 3 === 0,
+        externalChange: index % 5 === 0,
+      },
+      expiresAt: now() + 900_000,
+    },
+  });
+  if (!budget()) return;
+
+  // Granted, denied, expired, and still pending — in that rotation, so the
+  // projection holds all four states at once.
+  const settle = index % 4;
+  if (settle === 0) {
+    append({ type: 'approval.granted', actor: 'user:ara', trust: 'USER', runId: rid, payload: { approvalId, by: 'user:ara', reason: 'yes' } });
+  } else if (settle === 1) {
+    append({ type: 'approval.denied', actor: 'user:ara', trust: 'USER', runId: rid, payload: { approvalId, by: 'user:ara', reason: 'not that one' } });
+  } else if (settle === 2) {
+    append({ type: 'approval.expired', actor: 'system', trust: 'SYSTEM', runId: rid, payload: { approvalId, by: 'system', reason: 'nobody answered' } });
+  }
+}
+
+/**
  * Facts and entities — including the two mutation paths a naive projector
  * misses. Inserts alone look correct on a fresh build and wrong on replay.
  */
@@ -169,6 +210,7 @@ function seed(s: TestSubstrate, targetEvents: number): void {
     if (budget()) seedToolCalls(append, index, budget);
     if (budget()) seedKnowledge(append, index, () => s.clock.now(), budget);
     if (budget()) seedMemory(append, index, budget);
+    if (budget()) seedApprovals(append, index, () => s.clock.now(), budget);
   }
 }
 

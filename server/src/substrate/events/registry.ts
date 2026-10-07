@@ -124,9 +124,14 @@ const ArtifactDeleted = z.object({
  */
 const RunPlanned = z.object({
   goal: z.string().min(1),
+  /**
+   * What the plan authorises. For browsing these are action kinds; for a
+   * general run they are tool names. One concept, deliberately: a plan
+   * fixes what may be done before anything is read (§22).
+   */
   allowedKinds: z.array(z.string().min(1)),
   maxSteps: z.number().int().min(1),
-  allowedOrigins: z.array(z.string()),
+  allowedOrigins: z.array(z.string()).default([]),
   carriesPrivateData: z.boolean(),
   autonomy: z.number().int().min(0).max(4),
   seal: z.string().min(1),
@@ -239,7 +244,79 @@ const SystemLifecycle = z.object({ version: z.string().min(1) }).strict();
 const MigrationApplied = z.object({ version: z.number().int(), name: z.string().min(1) }).strict();
 const ProjectionRebuilt = z.object({ projector: z.string().min(1), events: z.number().int().min(0) }).strict();
 
+
+// ───────────────────────────────────────────────── M3: runs, steps, approvals
+
+const RunEnded = z.object({
+  reason: z.string().max(200),
+  steps: z.number().int().min(0).default(0),
+}).strict();
+
+const RunStep = z.object({
+  stepIndex: z.number().int().min(0),
+  tool: z.string().min(1),
+  tier: z.enum(['observe', 'interact', 'effect']),
+  /** Terminal only. Bounded, and never the tool's own prose (decision 010). */
+  outcome: z.enum(['succeeded', 'failed', 'denied', 'skipped']).optional(),
+}).strict();
+
+/**
+ * A dry run. Deliberately *not* `tool.invoked`.
+ *
+ * The whole point of a dry run is that nothing happened, and a log where
+ * the two are the same event cannot answer "did it actually send it".
+ */
+const ToolDryRun = z.object({
+  callId: z.string().min(1),
+  tool: z.string().min(1),
+  /** What it would have done, from the tool's own `preview`. */
+  preview: z.string().max(200),
+  tier: z.enum(['observe', 'interact', 'effect']),
+}).strict();
+
+/**
+ * An approval names the *specific* step (§30).
+ *
+ * `stepSeal` binds it to one step of one plan, so a yes cannot be replayed
+ * against a different action. A generic standing "yes" is a different
+ * feature and is not this one.
+ */
+const ApprovalRequested = z.object({
+  approvalId: z.string().min(1),
+  stepSeal: z.string().min(1),
+  tool: z.string().min(1),
+  action: z.string().max(200),
+  needs: z.number().int().min(0).max(4),
+  triple: z.object({
+    untrustedInput: z.boolean(),
+    sensitiveAccess: z.boolean(),
+    externalChange: z.boolean(),
+  }).strict(),
+  expiresAt: z.number().int(),
+}).strict();
+
+const ApprovalSettled = z.object({
+  approvalId: z.string().min(1),
+  /** Who said so. An agent approving itself is refused before this is written. */
+  by: z.string().min(1),
+  reason: z.string().max(200).default(''),
+}).strict();
+
+const BudgetExceeded = z.object({
+  budget: z.enum(['steps', 'wallClock', 'toolCalls', 'approvals']),
+  limit: z.number(),
+  reached: z.number(),
+}).strict();
+
+const PolicyEvaluated = z.object({
+  tool: z.string().min(1),
+  decision: z.enum(['allowed', 'supervised', 'denied']),
+  code: z.string().min(1),
+  rung: z.number().int().min(0).max(4),
+}).strict();
+
 export type PayloadSchema = z.ZodType<Record<string, unknown>>;
+
 
 const SCHEMAS = new Map<EventType, PayloadSchema>([
   ['session.started', SessionStarted as PayloadSchema],
@@ -251,6 +328,17 @@ const SCHEMAS = new Map<EventType, PayloadSchema>([
   ['run.started', RunStarted as PayloadSchema],
   ['run.finished', RunFinished as PayloadSchema],
   ['run.planned', RunPlanned as PayloadSchema],
+  ['run.failed', RunEnded as PayloadSchema],
+  ['run.cancelled', RunEnded as PayloadSchema],
+  ['run.step.started', RunStep as PayloadSchema],
+  ['run.step.finished', RunStep as PayloadSchema],
+  ['tool.dryrun', ToolDryRun as PayloadSchema],
+  ['approval.requested', ApprovalRequested as PayloadSchema],
+  ['approval.granted', ApprovalSettled as PayloadSchema],
+  ['approval.denied', ApprovalSettled as PayloadSchema],
+  ['approval.expired', ApprovalSettled as PayloadSchema],
+  ['budget.exceeded', BudgetExceeded as PayloadSchema],
+  ['policy.evaluated', PolicyEvaluated as PayloadSchema],
   ['tool.invoked', ToolInvoked as PayloadSchema],
   ['tool.succeeded', ToolSucceeded as PayloadSchema],
   ['tool.failed', ToolFailed as PayloadSchema],

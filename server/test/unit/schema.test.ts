@@ -34,9 +34,12 @@ describe('event schemas (§15)', () => {
     // Decision 003: the type is nameable, the payload is not yet appendable.
     // Repointed at M1: 'vault.unlocked' became appendable when the vault
     // shipped, exactly as decision 003 intends. 'schedule.fired' belongs to
-    // M5 and keeps the assertion honest until then.
+    // M5 and keeps the assertion honest until then. 'budget.exceeded' was
+    // repointed the same way at M3: the executor began appending it, so it
+    // acquired a schema, which is the mechanism working rather than a
+    // weakened test.
     expect(payloadSchema('schedule.fired')).toBeUndefined();
-    expect(payloadSchema('budget.exceeded')).toBeUndefined();
+    expect(payloadSchema('budget.exceeded')).toBeDefined();
     // The type names themselves are already in the closed union.
     expect(EVENT_TYPES).toContain('schedule.fired');
   });

@@ -118,7 +118,12 @@ export interface VaultCliDeps {
   log: EventLog;
 }
 
-function makeVault(deps: VaultCliDeps): Vault {
+/**
+ * Exported because M3's commands need the same vault this one builds, and
+ * two constructions of the same object are two chances to configure the
+ * KDF differently.
+ */
+export function makeVault(deps: VaultCliDeps): Vault {
   return new Vault({
     storage: deps.storage,
     clock: deps.clock,

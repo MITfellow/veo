@@ -280,6 +280,33 @@ export const MIGRATIONS: readonly Migration[] = [
       );
     `,
   },
+  {
+    version: 8,
+    name: 'approvals',
+    sql: `
+      -- A projection. Every approval ever asked for, and what became of it.
+      -- "Why did it do that" and "what did I agree to" are the same
+      -- question asked from two ends, and both are answered here.
+      CREATE TABLE approvals (
+        id          TEXT PRIMARY KEY,
+        run_id      TEXT,
+        step_seal   TEXT NOT NULL,
+        tool        TEXT NOT NULL,
+        action      TEXT NOT NULL,
+        needs       INTEGER NOT NULL,
+        untrusted   INTEGER NOT NULL,
+        sensitive   INTEGER NOT NULL,
+        external    INTEGER NOT NULL,
+        status      TEXT NOT NULL,          -- pending | granted | denied | expired
+        requested_at INTEGER NOT NULL,
+        expires_at  INTEGER NOT NULL,
+        settled_at  INTEGER,
+        settled_by  TEXT
+      );
+      CREATE INDEX approvals_status ON approvals (status, requested_at);
+      CREATE INDEX approvals_run ON approvals (run_id);
+    `,
+  },
 ];
 
 /** The schema version a fresh database lands on. */
