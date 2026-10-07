@@ -307,6 +307,36 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX approvals_run ON approvals (run_id);
     `,
   },
+  {
+    version: 9,
+    name: 'identities',
+    sql: `
+      -- Connected accounts. Authoritative state, not a projection: the
+      -- rows here point at vault secrets, and a table that can be dropped
+      -- and rebuilt would orphan the only reference to a live token.
+      --
+      -- No token is stored in this table. 'access_ref' and 'refresh_ref'
+      -- are 'secret://name/version' URIs; the values sit under the master
+      -- key, which is how revoking means something and how a stolen
+      -- database file yields no mailbox.
+      CREATE TABLE identities (
+        id            TEXT PRIMARY KEY,
+        provider      TEXT NOT NULL,          -- google | github | ...
+        account_label TEXT NOT NULL,          -- what the user calls it
+        scope         TEXT NOT NULL,          -- PERSONAL | WORK | ...
+        granted_scopes TEXT NOT NULL,         -- space separated, as granted
+        access_ref    TEXT NOT NULL,
+        refresh_ref   TEXT,                   -- null: no refresh was issued
+        expires_at    INTEGER,                -- null: provider gave no expiry
+        status        TEXT NOT NULL,          -- active | expired | revoked
+        connected_at  INTEGER NOT NULL,
+        last_verified INTEGER NOT NULL,
+        last_error    TEXT
+      );
+      CREATE INDEX identities_provider ON identities (provider, status);
+      CREATE UNIQUE INDEX identities_account ON identities (provider, account_label);
+    `,
+  },
 ];
 
 /** The schema version a fresh database lands on. */

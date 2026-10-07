@@ -1,53 +1,48 @@
 # Where this is
 
-**M0, M1, M2 and M3 are complete.** The browser-use subsystem and the Get
-Started onboarding UI ship alongside them (decisions 008–010).
+Suite: **49 files / 645 tests / ~26 s**, `tsc` + lint clean, zero
+`eslint-disable`. Schema **v9**. Last commits: semantic layer `f5232c8`,
+OAuth (this one).
 
-Last verified by running, not by assuming:
+## Built
 
-```
-npx tsc --noEmit     clean
-npm run lint         clean (0 disables in the project)
-npx vitest run       43 files, 535 tests, 16.8 s
-bash docs/progress/M3-demo.sh   runs end to end
-```
+- M0 substrate, M1 memory, M2 bitemporal memory, M3 plan-gate-execute.
+- Personal intelligence: world model, claims, graph (`docs/PERSONAL_*.md`).
+- Egress behind a guard (013). No inference call, ever.
+- **Semantic layer (014)** — `capability/semantics/{ontology,manifest,broker}`.
+  Nine objectives, seven connector manifests, a broker that returns a
+  route or a refusal with a remedy.
+- **OAuth (015)** — `capability/auth/{pkce,oauth,identities}`, PKCE,
+  refresh-on-use, tokens in the vault, `identities` table.
 
 ## The next concrete action
 
-**M4 — the security envelope in anger**, per the spec's milestone list. Before
-writing any of it:
+Wire **one** connector end to end — `gcal` read-only is the smallest
+honest choice — so that `broker.route('READ_CURRENT_STATE')` produces a
+route, `withAccessToken` spends a token, `Egress` makes the call, and the
+result lands as a FOREIGN-trust fact. Everything it needs now exists;
+nothing yet joins them.
 
-1. Write `docs/progress/M4-tests.md` first, as every milestone has.
-2. Re-read §20, §21 and decision 007: M4 is where the quarantine's dual-path
-   channel meets the executor, and where `capture.*` events stop being
-   M2-shaped.
+Order inside that:
+1. A `ConnectorRuntime` interface: given a route and a token, perform
+   the operation. One implementation, `gcal`.
+2. A health reporter, so `BrokerContext.health` stops being a test fixture.
+3. The loopback redirect listener (`127.0.0.1:8899`), which is the last
+   missing piece of the sign-in flow.
+4. Feed `successRate` from the audit trail (§150).
 
-## Two things to raise with the user
+## Blocked / unresolved
 
-1. **The §49 Veo collision (decision 001) must be raised before M7.** The spec
-   allows exactly eleven Veo files to be touched; three of them
-   (`MemoryPanel.tsx`, `store.tsx`, `seed.ts`) already exist with other
-   content, and the dev proxy is on **7777**, not the 8787 the spec names.
-   A twelfth file means stop and report — so this needs an answer, not a
-   guess.
-2. **Nothing is pushed.** The repo is **6 commits ahead** of
-   `MITfellow/veo` `main` (M0, M1, onboarding+jobs, browser use, audit trail,
-   M2 — plus M3 when it lands). The user has confirmed the same PAT may be
-   reused; it is never written to disk.
+- **The §49 Veo collision is still unraised with the user.** Three of the
+  eleven permitted files already exist (`MemoryPanel.tsx`, `store.tsx`,
+  `seed.ts`) and the proxy port is 7777, not 8787.
+- Nothing is pushed: **10 commits ahead** of `MITfellow/veo` `main`.
+- No real provider credentials, so no manifest is `AVAILABLE` in practice.
 
-## Standing rules for this repo
+## Unsure (guesses that should be measured)
 
-- `server/` never imports from `../src` or `agent/`.
-- No model, no provider SDK, no network inference call, ever. Every
-  model-shaped function is a Cognitive Job with a deterministic baseline and
-  an inert, contract-tested `ModelStrategy`. Attaching a model is config-only.
-- A test list is written **before** the implementation, every milestone. Never
-  weaken, skip or `.only` a test. If a test fails, the implementation is
-  wrong until proven otherwise.
-- Ports, not globals. `Date.now`, `Math.random`, `crypto.randomUUID`, `fetch`,
-  `process.env` and `node:fs` appear only in `substrate/` and `test/fakes/`,
-  and a structural test re-checks it independently of ESLint.
-- A lint ceiling is a design signal. Nine have been hit; all nine dissolved
-  into a better shape. Still zero `eslint-disable`.
-- Git identity is not persisted in this sandbox:
-  `git -c user.name="Veo" -c user.email="veo@local" commit`.
+`MAX_VERBATIM_SPAN=32`, `MAX_LABEL=80`, M2 half-lives (7 d / 365 d / ∞),
+`FOREIGN_CONFIDENCE_SCALE=0.5`, recall weights, `TIER_FLOOR`,
+`DEFAULT_BUDGET`, `DEFAULT_TTL_MS=15 min`, 3-hop path limit, egress
+defaults (**3 redirects is probably too few for a real sign-in flow**),
+broker score weights `0.5/0.35/0.15`, `EXPIRY_SKEW_MS=60_000`.
