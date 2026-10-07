@@ -59,38 +59,26 @@ export class RealNet implements Net {
   ): Promise<{ status: number; headers: Record<string, string>; body: string }> {
     const target = new URL(url);
     const secure = target.protocol === 'https:';
-    if (!secure && target.protocol !== 'http:') {
-      return Promise.reject(new TransportError('protocol', `${target.protocol} is not a transport this build speaks.`));
-    }
+    const refusal = dialRefusal(target, secure);
+    if (refusal !== null) return Promise.reject(refusal);
 
-    /*
-     * A literal address never reaches `lookup` — Node dials it directly —
-     * so the pinned resolver below would never see `http://127.0.0.1/` and
-     * the whole check could be walked around by not using a hostname.
-     * Found by a test that expected a refusal and got a 200.
-     */
-    const literal = privateReason(target.hostname);
-    if (literal !== null) {
-      return Promise.reject(new TransportError(
-        'dns', `${target.hostname} is unreachable: ${literal}.`,
-      ));
-    }
+    const options = {
+      protocol: target.protocol,
+      hostname: target.hostname,
+      port: target.port === '' ? (secure ? 443 : 80) : Number(target.port),
+      path: `${target.pathname}${target.search}`,
+      method: init.method ?? 'GET',
+      headers: { 'user-agent': this.userAgent, ...(init.headers ?? {}) },
+      // Redirects are followed by the egress layer, which re-validates
+      // every hop. Following them here would bypass that entirely.
+      lookup: pinnedLookup,
+      timeout: this.timeoutMs,
+    };
 
     return new Promise((resolve, reject) => {
       const send = secure ? httpsRequest : httpRequest;
       const req = send(
-        {
-          protocol: target.protocol,
-          hostname: target.hostname,
-          port: target.port === '' ? (secure ? 443 : 80) : Number(target.port),
-          path: `${target.pathname}${target.search}`,
-          method: init.method ?? 'GET',
-          headers: { 'user-agent': this.userAgent, ...(init.headers ?? {}) },
-          // Redirects are followed by the egress layer, which re-validates
-          // every hop. Following them here would bypass that entirely.
-          lookup: pinnedLookup,
-          timeout: this.timeoutMs,
-        },
+        options,
         (res) => collect(res, this.maxBytes, resolve, reject),
       );
 
@@ -105,6 +93,26 @@ export class RealNet implements Net {
       req.end();
     });
   }
+}
+
+/**
+ * Refusals that must happen before a socket is opened, or `null`.
+ *
+ * The literal-address check is here and not only in the policy layer
+ * because a literal address never reaches `lookup` — Node dials it
+ * directly — so the pinned resolver would never see `http://127.0.0.1/`
+ * and the whole check could be walked around by not using a hostname.
+ * Found by a test that expected a refusal and got a 200.
+ */
+function dialRefusal(target: URL, secure: boolean): TransportError | null {
+  if (!secure && target.protocol !== 'http:') {
+    return new TransportError('protocol', `${target.protocol} is not a transport this build speaks.`);
+  }
+  const literal = privateReason(target.hostname);
+  if (literal !== null) {
+    return new TransportError('dns', `${target.hostname} is unreachable: ${literal}.`);
+  }
+  return null;
 }
 
 /** Read the body under a hard ceiling, then normalise the headers. */
