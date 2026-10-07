@@ -1,6 +1,6 @@
 # Where this is
 
-Suite: **49 files / 645 tests / ~26 s**, `tsc` + lint clean, zero
+Suite: **49 files / 661 tests / ~19 s**, `tsc` + lint clean, zero
 `eslint-disable`. Schema **v9**. Last commits: semantic layer `f5232c8`,
 OAuth (this one).
 
@@ -14,22 +14,25 @@ OAuth (this one).
   route or a refusal with a remedy.
 - **OAuth (015)** — `capability/auth/{pkce,oauth,identities}`, PKCE,
   refresh-on-use, tokens in the vault, `identities` table.
+- **First connector wired (016)** — `capability/runtime/{types,gcal,
+  invoke,health,observe}`. An objective goes in, Google Calendar is
+  chosen, a token is spent, the answer lands as FOREIGN facts whose
+  valid time is the event's own span.
 
 ## The next concrete action
 
-Wire **one** connector end to end — `gcal` read-only is the smallest
-honest choice — so that `broker.route('READ_CURRENT_STATE')` produces a
-route, `withAccessToken` spends a token, `Egress` makes the call, and the
-result lands as a FOREIGN-trust fact. Everything it needs now exists;
-nothing yet joins them.
+The **loopback redirect listener** — `127.0.0.1:8899/oauth/callback` —
+which is the last missing piece of sign-in. Everything either side of it
+exists: `OAuthClient.begin()` produces the URL to open, `complete()`
+takes the callback URL. Nothing currently receives that callback.
 
-Order inside that:
-1. A `ConnectorRuntime` interface: given a route and a token, perform
-   the operation. One implementation, `gcal`.
-2. A health reporter, so `BrokerContext.health` stops being a test fixture.
-3. The loopback redirect listener (`127.0.0.1:8899`), which is the last
-   missing piece of the sign-in flow.
-4. Feed `successRate` from the audit trail (§150).
+Then, in order:
+1. Feed `successRate` from the audit trail (§150); it is a constant 0.5
+   for every connector today.
+2. A second connector, to prove the first one's shape generalises.
+   `gmail` read-only is the natural pair.
+3. Surface connected accounts in `server/web/` — the connectors page
+   lists catalogue entries and cannot yet sign anything in.
 
 ## Blocked / unresolved
 
