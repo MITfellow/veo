@@ -302,6 +302,18 @@ const ApprovalSettled = z.object({
   reason: z.string().max(200).default(''),
 }).strict();
 
+const EgressAttempted = z.object({
+  /** The origin only. A path or query string is where private data hides (§21). */
+  origin: z.string().min(1),
+  method: z.string().min(1),
+  bytes: z.number().int().min(0),
+}).strict();
+
+const EgressBlocked = z.object({
+  origin: z.string().min(1),
+  reason: z.string().max(200),
+}).strict();
+
 const BudgetExceeded = z.object({
   budget: z.enum(['steps', 'wallClock', 'toolCalls', 'approvals']),
   limit: z.number(),
@@ -337,6 +349,8 @@ const SCHEMAS = new Map<EventType, PayloadSchema>([
   ['approval.granted', ApprovalSettled as PayloadSchema],
   ['approval.denied', ApprovalSettled as PayloadSchema],
   ['approval.expired', ApprovalSettled as PayloadSchema],
+  ['egress.attempted', EgressAttempted as PayloadSchema],
+  ['egress.blocked', EgressBlocked as PayloadSchema],
   ['budget.exceeded', BudgetExceeded as PayloadSchema],
   ['policy.evaluated', PolicyEvaluated as PayloadSchema],
   ['tool.invoked', ToolInvoked as PayloadSchema],
