@@ -3,7 +3,7 @@ import { request as httpsRequest } from 'node:https';
 import { lookup as dnsLookup } from 'node:dns';
 import type { IncomingMessage } from 'node:http';
 import type { Net } from './ports.js';
-import { privateReason } from './addresses.js';
+import { METADATA_HOSTS, privateReason } from './addresses.js';
 
 /**
  * The outbound network, and the only place in the platform that opens a
@@ -40,17 +40,35 @@ export interface RealNetOptions {
   maxBytes?: number;
   timeoutMs?: number;
   userAgent?: string;
+  /**
+   * Permit private and loopback addresses. **Off by default, and only
+   * ever on for the device mesh.**
+   *
+   * The refusal exists so that a browsing subsystem cannot be talked
+   * into reaching the machine's own services. The mesh is the one caller
+   * whose destination is not caller-supplied at all: it comes from a
+   * peer record created by a human reading a pairing code aloud, and the
+   * payload is already sealed. Lifting the check for browsing would be a
+   * hole; lifting it here is the difference between having the feature
+   * and not.
+   *
+   * The cloud metadata services stay refused regardless. There is no
+   * mesh peer at 169.254.169.254.
+   */
+  allowLoopback?: boolean;
 }
 
 export class RealNet implements Net {
   private readonly maxBytes: number;
   private readonly timeoutMs: number;
   private readonly userAgent: string;
+  private readonly allowLoopback: boolean;
 
   constructor(options: RealNetOptions = {}) {
     this.maxBytes = options.maxBytes ?? 8_000_000;
     this.timeoutMs = options.timeoutMs ?? 20_000;
     this.userAgent = options.userAgent ?? 'arish/0.1 (+personal agent; no inference)';
+    this.allowLoopback = options.allowLoopback ?? false;
   }
 
   fetch(
@@ -59,7 +77,7 @@ export class RealNet implements Net {
   ): Promise<{ status: number; headers: Record<string, string>; body: string }> {
     const target = new URL(url);
     const secure = target.protocol === 'https:';
-    const refusal = dialRefusal(target, secure);
+    const refusal = dialRefusal(target, secure, this.allowLoopback);
     if (refusal !== null) return Promise.reject(refusal);
 
     const options = {
@@ -71,7 +89,7 @@ export class RealNet implements Net {
       headers: { 'user-agent': this.userAgent, ...(init.headers ?? {}) },
       // Redirects are followed by the egress layer, which re-validates
       // every hop. Following them here would bypass that entirely.
-      lookup: pinnedLookup,
+      lookup: this.allowLoopback ? undefined : pinnedLookup,
       timeout: this.timeoutMs,
     };
 
@@ -104,10 +122,16 @@ export class RealNet implements Net {
  * and the whole check could be walked around by not using a hostname.
  * Found by a test that expected a refusal and got a 200.
  */
-function dialRefusal(target: URL, secure: boolean): TransportError | null {
+function dialRefusal(target: URL, secure: boolean, allowLoopback: boolean): TransportError | null {
   if (!secure && target.protocol !== 'http:') {
     return new TransportError('protocol', `${target.protocol} is not a transport this build speaks.`);
   }
+  if (METADATA_HOSTS.has(target.hostname)) {
+    // Never, under any option. A cloud metadata endpoint is not a peer.
+    return new TransportError('dns', `${target.hostname} is a metadata service and is never dialled.`);
+  }
+  if (allowLoopback) return null;
+
   const literal = privateReason(target.hostname);
   if (literal !== null) {
     return new TransportError('dns', `${target.hostname} is unreachable: ${literal}.`);

@@ -56,6 +56,12 @@ export interface HttpDeps {
   files?: FileStore;
   /** Root of the static UI. Defaults to `web/` beside the built output. */
   webRoot?: string;
+  /**
+   * Inbound mesh frames, when this device is reachable by peers. Absent
+   * means the mesh port is closed: `/mesh/frame` 404s like any unknown
+   * path, which is what a device with no peers should look like.
+   */
+  mesh?: ((raw: unknown) => Promise<{ status: number; body: unknown }>) | undefined;
 }
 
 function defaultWebRoot(): string {
@@ -77,6 +83,12 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
 }
 
 const INVALID_JSON = Symbol.for('arish.invalid-json');
+
+async function readText(req: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString('utf8');
+}
 
 /** Exact-match routes, so dispatch is a lookup rather than a ladder. */
 const ROUTES: Record<string, (body: unknown, deps: HttpDeps) => ApiResponse> = {
@@ -199,6 +211,13 @@ export function createHttpServer(deps: HttpDeps): Server {
       try {
         if (path.startsWith('/api/')) {
           sendJson(res, await handleApi(method, path, await readBody(req), deps));
+          return;
+        }
+        if (path === '/mesh/frame' && deps.mesh !== undefined) {
+          // The body is a sealed frame, so it is read as text and handed
+          // over unparsed: JSON-parsing it here would be a second parser
+          // in front of the one that validates it.
+          sendJson(res, await deps.mesh(await readText(req)));
           return;
         }
         serveStatic(res, files, root, path);

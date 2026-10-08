@@ -337,6 +337,32 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE UNIQUE INDEX identities_account ON identities (provider, account_label);
     `,
   },
+  {
+    version: 10,
+    name: 'peers',
+    sql: `
+      -- Paired agents, on this device and on others. Authoritative state
+      -- for the same reason 'identities' is: the rows point at vault
+      -- secrets, and a table that could be rebuilt would orphan them.
+      --
+      -- 'last_seq_in' and 'next_seq_out' are the replay defence. They
+      -- belong in the durable record, not in memory, or a restart would
+      -- make every already-seen frame acceptable again.
+      CREATE TABLE peers (
+        id           TEXT PRIMARY KEY,       -- the peer's device id
+        label        TEXT NOT NULL,
+        address      TEXT NOT NULL,          -- '' for an in-device link
+        grants       TEXT NOT NULL,          -- space separated
+        key_ref      TEXT NOT NULL,          -- secret:// of the pairing secret
+        last_seq_in  INTEGER NOT NULL DEFAULT 0,
+        next_seq_out INTEGER NOT NULL DEFAULT 1,
+        paired_at    INTEGER NOT NULL,
+        last_seen_at INTEGER,
+        status       TEXT NOT NULL           -- active | revoked
+      );
+      CREATE INDEX peers_status ON peers (status);
+    `,
+  },
 ];
 
 /** The schema version a fresh database lands on. */

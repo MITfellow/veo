@@ -291,6 +291,26 @@ export class MemoryStore {
       .map(toFact);
   }
 
+  /**
+   * Facts whose valid time *overlaps* a window, rather than containing a
+   * point. Sampling the ends of a window misses everything strictly
+   * inside it, which for a calendar is most of a day.
+   */
+  during(from: number, to: number, query: Query = {}): Fact[] {
+    const believed = query.believedAt ?? this.deps.now();
+    const ceiling = allowedSensitivities(SENSITIVITY_RANK[query.maxSensitivity ?? 'sensitive']);
+    const predicate = query.predicate ?? null;
+    return this.deps.storage.prepare(`
+      SELECT * FROM facts
+       WHERE valid_from < ? AND (valid_to IS NULL OR valid_to > ?)
+         AND recorded_at <= ? AND (retracted_at IS NULL OR retracted_at > ?)
+         AND (? IS NULL OR predicate = ?)
+         AND sensitivity IN (${ceiling.map(() => '?').join(',')})
+       ORDER BY valid_from ASC, id ASC LIMIT ?
+    `).all<Row>(to, from, believed, believed, predicate, predicate, ...ceiling, query.limit ?? 500)
+      .map(toFact);
+  }
+
   /** Everything ever recorded about one subject and predicate, in order. */
   history(subject: string, predicate: string): Fact[] {
     return this.deps.storage
