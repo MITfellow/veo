@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { EffectCommitted, EffectCompensated, EffectIntended, EffectReconciled } from './effects.js';
+import { EgressAttempted, EgressBlocked } from './egress-schema.js';
 import { type EventType, TrustLevelSchema } from './types.js';
 
 /**
@@ -302,17 +304,6 @@ const ApprovalSettled = z.object({
   reason: z.string().max(200).default(''),
 }).strict();
 
-const EgressAttempted = z.object({
-  /** The origin only. A path or query string is where private data hides (§21). */
-  origin: z.string().min(1),
-  method: z.string().min(1),
-  bytes: z.number().int().min(0),
-}).strict();
-
-const EgressBlocked = z.object({
-  origin: z.string().min(1),
-  reason: z.string().max(200),
-}).strict();
 
 const BudgetExceeded = z.object({
   budget: z.enum(['steps', 'wallClock', 'toolCalls', 'approvals']),
@@ -377,6 +368,10 @@ const SCHEMAS = new Map<EventType, PayloadSchema>([
   ['quarantine.entered', QuarantineEntered as PayloadSchema],
   ['quarantine.extracted', QuarantineExtracted as PayloadSchema],
   ['quarantine.released', QuarantineReleased as PayloadSchema],
+  ['effect.intended', EffectIntended as PayloadSchema],
+  ['effect.committed', EffectCommitted as PayloadSchema],
+  ['effect.compensated', EffectCompensated as PayloadSchema],
+  ['effect.reconciled', EffectReconciled as PayloadSchema],
   ['policy.denied', PolicyDenied as PayloadSchema],
   ['policy.ruleoftwo-blocked', RuleOfTwoBlocked as PayloadSchema],
   ['trust.downgraded', TrustDowngraded as PayloadSchema],

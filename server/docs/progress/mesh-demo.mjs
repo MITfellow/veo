@@ -148,7 +148,6 @@ if (shared.ok) {
 // ── 7. What crossed the wire ─────────────────────────────────────────
 say('7. WHAT A WIRETAP WOULD HAVE SEEN');
 const seen = [];
-laptop.agent === undefined;
 laptopLinkWatch(seen);
 await laptop.agent.ask(phone.id, 'availability', { from: start, to: start + 1 });
 say(`   ${seen[0]?.slice(0, 150)}…`);

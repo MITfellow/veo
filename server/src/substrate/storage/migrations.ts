@@ -363,6 +363,37 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX peers_status ON peers (status);
     `,
   },
+  {
+    version: 11,
+    name: 'outbox',
+    sql: `
+      -- The outbox (§13). A projection: every row is derivable from
+      -- effect.* events, and 'rebuild-identity' proves it.
+      --
+      -- The input itself is NOT here, only its digest. An outbox row
+      -- outlives the run that wrote it, and arguments carry recipients,
+      -- amounts and occasionally secrets.
+      CREATE TABLE outbox (
+        key          TEXT PRIMARY KEY,   -- idempotency key
+        tool         TEXT NOT NULL,
+        version      TEXT NOT NULL,
+        run_id       TEXT,
+        step_id      TEXT NOT NULL,
+        input_digest TEXT NOT NULL,
+        reversible   INTEGER NOT NULL,
+        idempotent   INTEGER NOT NULL,
+        -- intended | committed | compensated | needs_attention | absent
+        status       TEXT NOT NULL,
+        remote_ref   TEXT,
+        summary      TEXT NOT NULL DEFAULT '',
+        detail       TEXT NOT NULL DEFAULT '',
+        intended_at  INTEGER NOT NULL,
+        settled_at   INTEGER
+      );
+      CREATE INDEX outbox_status ON outbox (status, intended_at);
+      CREATE INDEX outbox_run ON outbox (run_id);
+    `,
+  },
 ];
 
 /** The schema version a fresh database lands on. */

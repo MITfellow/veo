@@ -1,6 +1,7 @@
 import type { Projector } from '../events/log.js';
 import { approvalsProjector, capturesProjector, messagesProjector, runsProjector, sessionsProjector, toolCallsProjector } from './core.js';
 import { entitiesProjector, factsProjector, itemsProjector } from './facts.js';
+import { outboxProjector } from './outbox.js';
 
 /**
  * Projectors are **registered, not discovered**.
@@ -21,6 +22,7 @@ export function allProjectors(): Projector[] {
     entitiesProjector(),
     itemsProjector(),
     approvalsProjector(),
+    outboxProjector(),
   ];
 }
 

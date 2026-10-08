@@ -49,6 +49,8 @@ export const EVENT_TYPES = [
   'budget.exceeded', 'degradation.changed',
   // completion gates (§36 — default FAIL)
   'gate.passed', 'gate.failed',
+  // external effects (§13 of the full specification — intend, then commit)
+  'effect.intended', 'effect.committed', 'effect.compensated', 'effect.reconciled',
   // rules (§33 rule.induce)
   'rule.proposed', 'rule.accepted', 'rule.rejected', 'rule.fired',
   // briefs and drafts

@@ -191,6 +191,42 @@ function seedMemory(append: Append, index: number, budget: () => boolean): void 
 }
 
 /**
+ * External effects in all five states (§13).
+ *
+ * Every settlement path is here because the one that matters most is the
+ * *unsettled* one: a rebuild that lost an open intention would turn
+ * "we do not know whether this email was sent" into "no email was ever
+ * attempted", which is precisely the amnesia the outbox exists to prevent.
+ */
+function seedEffects(append: Append, index: number, budget: () => boolean): void {
+  const key = `effect-${index}`;
+  const tool = index % 3 === 0 ? 'mail.send' : 'calendar.create';
+  append({
+    type: 'effect.intended', actor: 'agent', trust: 'SYSTEM', runId: `run-${index}`,
+    payload: {
+      key, tool, version: '1', stepId: `step-${index % 5}`,
+      inputDigest: `digest-${index}`, reversible: index % 3 !== 0,
+      idempotent: index % 4 === 0, summary: `effect ${index}`,
+    },
+  });
+  if (!budget()) return;
+
+  // Committed, compensated, unprobeable, confirmed-absent, and still open.
+  const settle = index % 5;
+  if (settle === 0) {
+    append({ type: 'effect.committed', actor: 'agent', trust: 'SYSTEM', runId: `run-${index}`, payload: { key, tool, remoteRef: `remote-${index}`, summary: 'done', reconciled: false } });
+  } else if (settle === 1 && budget()) {
+    append({ type: 'effect.committed', actor: 'agent', trust: 'SYSTEM', runId: `run-${index}`, payload: { key, tool, remoteRef: `remote-${index}`, summary: 'done', reconciled: false } });
+    append({ type: 'effect.compensated', actor: 'agent', trust: 'SYSTEM', runId: `run-${index}`, payload: { key, tool, detail: 'undone' } });
+  } else if (settle === 2) {
+    append({ type: 'effect.reconciled', actor: 'agent', trust: 'SYSTEM', runId: `run-${index}`, payload: { key, tool, outcome: 'needs_attention', detail: 'nobody can say' } });
+  } else if (settle === 3) {
+    append({ type: 'effect.reconciled', actor: 'agent', trust: 'SYSTEM', runId: `run-${index}`, payload: { key, tool, outcome: 'absent', detail: 'no record at the provider' } });
+  }
+  // settle === 4 stays open: the process died mid-effect.
+}
+
+/**
  * A deterministic workload exercising every projector and every mutation
  * path, not just inserts.
  */
@@ -211,6 +247,7 @@ function seed(s: TestSubstrate, targetEvents: number): void {
     if (budget()) seedKnowledge(append, index, () => s.clock.now(), budget);
     if (budget()) seedMemory(append, index, budget);
     if (budget()) seedApprovals(append, index, () => s.clock.now(), budget);
+    if (budget()) seedEffects(append, index, budget);
   }
 }
 

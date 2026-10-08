@@ -1,8 +1,16 @@
 # Where this is
 
-Suite: **52 files / 708 tests / ~33 s**, `tsc` + lint clean, zero
-`eslint-disable`. Schema **v10**. Last commits: semantic layer `f5232c8`,
-OAuth (this one).
+Suite: **53 files / 725 tests / ~27 s**, `tsc` + lint clean, zero
+`eslint-disable`. Schema **v11**. Last commits: mesh `1934509`, mesh demo
+`f666e79`, exactly-once effects (this one).
+
+> **The specification was replaced and the paste is truncated at §20.**
+> Parts IV–VIII and Appendices A–H are missing — the 14 connectors, the
+> 18 workflows, browser use, Veo integration, the M0–M18 table in §36,
+> and Appendix E's 40 pre-answered decisions. Decision 018 lists the
+> divergences already visible: Node 22+ vs our `>=20`, and three
+> cognitive jobs (`page.extract`, `intent.parse`, `priority.score`) that
+> §16.1 names and we do not have. Nothing beyond §20 has been guessed at.
 
 ## Built
 
@@ -24,9 +32,21 @@ OAuth (this one).
   chosen, a token is spent, the answer lands as FOREIGN facts whose
   valid time is the event's own span.
 
+- **Exactly-once external effects (018)** — `capability/outbox.ts`,
+  schema v11. An effect is two events: intend before touching the world,
+  commit after. A crash leaves a queryable intention instead of a
+  silence. Reconciliation asks the provider where it can and a human
+  where it cannot — **absence of a probe is never absence of the
+  effect**, so nothing is ever blindly retried.
+
 ## The next concrete action
 
-Drive `MeshAgent.expire()` from the orchestration tick. Today a request
+Surface `Outbox.needsAttention()` in the CLI and the web UI. The queue
+exists and only a human can drain it; today nothing shows it to them.
+No connector implements a probe yet either, so every real effect would
+reconcile to `needs_attention`.
+
+Then: drive `MeshAgent.expire()` from the orchestration tick. Today a request
 whose answer never arrives stays pending until a caller expires it by
 hand, which the tests do and nothing in the product does.
 
