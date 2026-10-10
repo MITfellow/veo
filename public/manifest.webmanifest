@@ -1,7 +1,7 @@
 {
   "name": "Veo",
   "short_name": "Veo",
-  "description": "Veo is a fast, private messaging app: tapbacks, effects, camera, voice memos, any-file attachments and full offline support. Everything stays on your device.",
+  "description": "Veo is a personal agent that runs on your own device: it remembers what you tell it, asks before it acts, shows its working, and forgets on command. Everything stays on your device.",
   "id": "/",
   "start_url": "/",
   "scope": "/",
@@ -54,8 +54,8 @@
   ],
   "shortcuts": [
     {
-      "name": "New Message",
-      "short_name": "Compose",
+      "name": "New conversation",
+      "short_name": "New",
       "url": "/?compose=1",
       "icons": [
         {

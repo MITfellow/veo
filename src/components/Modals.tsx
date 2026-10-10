@@ -61,7 +61,7 @@ export function NewMessageModal({ onClose }: { onClose: () => void }) {
   return (
     <div className="scrim" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal">
-        <header>New Message</header>
+        <header>New conversation</header>
         <div className="body">
           <div className="search">
             <IconSearch />

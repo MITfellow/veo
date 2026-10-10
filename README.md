@@ -1,13 +1,20 @@
 # Veo
 
-A complete, installable messaging app for the web — and the home of a personal agent
-that actually runs.
+**A personal agent you talk to.** It runs on your own machine, remembers what you
+tell it, asks before it acts, shows its working, and forgets on command.
 
-Three parts of one product:
+The interface is a conversation, because that is the honest shape for this: you say
+something, the agent answers, and the whole exchange — including what it looked up,
+what it chose not to do, and what it is waiting for permission to do — stays on the
+record where you can read it. Talking to people is a side effect of that interface,
+not the product.
 
-- **Veo**, the client. React + TypeScript + Vite, styled after macOS Messages (Tahoe).
-  No account, no backend: conversations, photos and files live in IndexedDB on your
-  own device, and the people you talk to reply through a small persona-driven engine.
+Three parts of one thing:
+
+- **Veo**, the client. React + TypeScript + Vite, installable, works offline.
+  No account, no backend: everything lives in IndexedDB on your own device. The
+  agent is the conversation named **Agent**; the other threads are a directory of
+  people the agent knows about, answered by a small local persona engine.
 - **[`agent/`](agent/)** — **ARISH**, a durable personal agent. An append-only event
   log in SQLite that *is* the state, a trust lattice that decides what untrusted
   content is allowed to cause, an approval gate in front of anything irreversible,
@@ -182,9 +189,10 @@ connector implements a reconciliation probe, so every real effect today lands in
 ---
 
 ## Chrome
-Matched to macOS Messages (Tahoe): rounded window with a shadow on a desktop
-backdrop, traffic lights, a filter button, the floating glass **compose** and **FaceTime**
-buttons, and the translucent thread header — centered avatar with the name pill underneath that
+
+A desktop-class chat surface, built to get out of the way of long agent transcripts:
+a rounded window with a shadow on a desktop backdrop, traffic lights, a filter button,
+the floating glass **compose** button, and the translucent thread header — centered avatar with the name pill underneath that
 messages blur beneath as they scroll. Conversation rows use avatar-inset hairline separators and a
 blue rounded selection. The composer is `+ · [ field … waveform ] · emoji`, with message effects
 living in the `+` tray; the field itself is fully transparent — only a hairline ring and a soft
@@ -197,7 +205,7 @@ simple, not a long pointed spike. The wedge reaches ~15px back *into* the bubble
 bottom-right of the final glyph ("Kiln" rendering as "Kilr"). See `docs/detail-pass.png` and
 `docs/ui-fix-pass.png`.
 
-**Pinned conversations** sit above the list exactly as macOS draws them: a three-up grid of large
+**Pinned conversations** sit above the list as a three-up grid of large
 circular avatars (group chats get the layered cluster), the newest unread message floating over the
 tile in a little white balloon, the newest tapback stuck to the avatar as a mini bubble, a blue dot
 beside the name when unread, and a filled blue rounded tile for the open conversation. Tapbacks on
@@ -219,19 +227,19 @@ bubbles carry the two trailing dots that make them read as tiny speech bubbles.
   "sent with Invisible Ink", "Message unsent"
 - Live `typing…` preview, mute icon, group avatar clusters
 - Search across contact names **and** message bodies (⌘K) — results are split into **Conversations**
-  and **Messages**, matches are highlighted, and clicking a message hit opens that thread and
+  and **In conversations**, matches are highlighted, and clicking a message hit opens that thread and
   scrolls straight to the message (loading older history first if it isn't mounted yet)
 - Right-click a row: Pin / Hide Alerts / Mark as Unread / Delete
 
 ### Thread
-- Real iMessage bubble geometry — gradient blue (iMessage), green (SMS), gray incoming,
-  with CSS bubble **tails** drawn only on the last message of a group
+- Bubble geometry with real tails — gradient blue for you, gray for the agent and for
+  anyone else, with CSS **tails** drawn only on the last message of a group
 - Message grouping (same sender within 2 min) and date separators (`Today 9:41 AM`)
 - Delivery lifecycle: **Sending… → Sent → Delivered → Read 10:42 AM**
 - Tapbacks (❤️ 👍 👎 😂 ‼️ ❓) with the pop animation, stacked per person, yours highlighted
 - Inline replies with a quoted bubble that scrolls + flashes the original on click
 - Edit, Undo Send ("You unsent a message"), Copy, Delete
-- Emoji-only messages render jumbo with no bubble, exactly like iOS
+- Emoji-only messages render jumbo with no bubble
 - Attachments: photos (aspect-ratio reserved so the thread never jumps), voice notes with a
   scrubbable waveform, link preview cards, file cards, shared-location card
 - Typing indicator with the correct person's avatar in group chats

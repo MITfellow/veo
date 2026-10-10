@@ -110,7 +110,7 @@ export const DEFAULT_SETTINGS: Store['settings'] = {
 export const ME = { name: 'You', handle: '+1 (415) 555‑0101' };
 
 /**
- * A brand-new install: the contact directory is available so New Message has
+ * A brand-new install: the contact directory is available so a new conversation has
  * someone to write to, but there is no conversation history of any kind.
  */
 export function buildSeedStore(): Store {

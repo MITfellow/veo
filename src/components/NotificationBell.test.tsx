@@ -44,7 +44,7 @@ describe('the notification bell', () => {
 
   it('60. renders nothing when the agent is not running', async () => {
     // Not an error in the window chrome. The sidebar belongs to the
-    // messaging app, which works fine with no agent at all.
+    // conversation UI, which works fine with no agent attached at all.
     vi.spyOn(agent, 'notifications').mockRejectedValue(
       new AgentUnavailableError('agent not running'),
     );

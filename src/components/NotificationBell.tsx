@@ -17,7 +17,7 @@ import { agent, type NotificationView } from '../lib/agent';
  *   interruption. The first time a badge shows something nobody asked
  *   for is the day people stop looking at badges.
  * - **Absent, not broken, when the agent is down.** No badge, no error
- *   in the corner of the chrome. The sidebar belongs to the messaging
+ *   in the corner of the chrome. The sidebar belongs to the conversation
  *   app, which works perfectly well with no agent running.
  * - **Dismissing is a fact, not a UI state.** "Got it" appends
  *   `reminder.seen` to the agent's log, so it survives a reload and

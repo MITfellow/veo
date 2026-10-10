@@ -12,7 +12,7 @@ import { applyUpdate } from './lib/sw';
 function Shell() {
   const { state, dispatch, activeChat, booted, effect, fireEffect, messagesFor, online, storageIssue, dismissStorageIssue } =
     useStore();
-  // the PWA "New Message" shortcut lands on /?compose=1
+  // the PWA "New conversation" shortcut lands on /?compose=1
   const [modal, setModal] = useState<null | 'new' | 'settings' | 'shortcuts'>(() =>
     new URLSearchParams(window.location.search).get('compose') ? 'new' : null,
   );
@@ -157,7 +157,7 @@ function Shell() {
         )}
         {updateReady && (
           <div className="banner update">
-            A new version of Messages is available.
+            A new version of Veo is available.
             <button className="banner-action" onClick={applyUpdate}>
               Reload
             </button>

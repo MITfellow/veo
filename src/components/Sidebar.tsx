@@ -177,7 +177,7 @@ export function Sidebar({
   }, [state.chats, deferredQuery, unreadOnly, messagesFor, chatTitle]);
 
   /** every matching message across every thread, newest first (Apple's
-      "Messages" section under the conversation hits) */
+      "In conversations" section under the conversation hits) */
   const messageHits = useMemo(() => {
     const q = deferredQuery.trim().toLowerCase();
     if (q.length < 2) return [];
@@ -362,10 +362,10 @@ export function Sidebar({
                 <path d="M21 11.5a8.38 8.38 0 0 1-8.5 8.5 9 9 0 0 1-3.6-.74L3 21l1.9-5.1A8.38 8.38 0 0 1 4 11.5 8.5 8.5 0 0 1 12.5 3 8.38 8.38 0 0 1 21 11.5z" />
               </svg>
             </div>
-            <div className="efr-title">No Conversations</div>
-            <div className="efr-sub">Start one and it will show up here.</div>
+            <div className="efr-title">Nothing here yet</div>
+            <div className="efr-sub">Talk to your agent, or start a conversation with someone.</div>
             <button className="btn primary efr-cta" onClick={onCompose}>
-              New Message
+              New conversation
             </button>
           </div>
         )}
@@ -373,7 +373,7 @@ export function Sidebar({
         {query.trim().length >= 2 && messageHits.length > 0 && (
           <>
             <div className="search-section" id="search-messages-label">
-              Messages
+              In conversations
             </div>
             <div role="group" aria-labelledby="search-messages-label">
             {messageHits.map(({ chat, msg }) => (
@@ -452,7 +452,7 @@ export function Sidebar({
           </div>
         </Floating>
       )}
-      <button className="glass-btn compose-btn" onClick={onCompose} title="New Message (⌘N)" aria-label="New message">
+      <button className="glass-btn compose-btn" onClick={onCompose} title="New conversation (⌘N)" aria-label="New conversation">
         <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
           <path d="M20.5 7.5 16.5 3.5 5.6 14.4a2 2 0 0 0-.5.9l-1 3.6 3.6-1a2 2 0 0 0 .9-.5L20.5 7.5Z" />
           <path d="m14.8 5.2 4 4" />
