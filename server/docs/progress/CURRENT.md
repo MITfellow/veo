@@ -1,6 +1,6 @@
 # Where this is
 
-Suite: **53 files / 725 tests / ~27 s**, `tsc` + lint clean, zero
+Suite: **55 files / 765 tests / ~36 s**, `tsc` + lint clean, zero
 `eslint-disable`. Schema **v11**. Last commits: mesh `1934509`, mesh demo
 `f666e79`, exactly-once effects (this one).
 
@@ -8,9 +8,10 @@ Suite: **53 files / 725 tests / ~27 s**, `tsc` + lint clean, zero
 > Parts IV–VIII and Appendices A–H are missing — the 14 connectors, the
 > 18 workflows, browser use, Veo integration, the M0–M18 table in §36,
 > and Appendix E's 40 pre-answered decisions. Decision 018 lists the
-> divergences already visible: Node 22+ vs our `>=20`, and three
-> cognitive jobs (`page.extract`, `intent.parse`, `priority.score`) that
-> §16.1 names and we do not have. Nothing beyond §20 has been guessed at.
+> divergences already visible. The four missing cognitive jobs are now
+> built (decision 019); **Node 22+ vs our `>=20` is still open** — the
+> sandbox runs v20, so bumping `engines` would stop the product running
+> where it is developed. Nothing beyond §20 has been guessed at.
 
 ## Built
 
@@ -39,14 +40,21 @@ Suite: **53 files / 725 tests / ~27 s**, `tsc` + lint clean, zero
   where it cannot — **absence of a probe is never absence of the
   effect**, so nothing is ever blindly retried.
 
+- **Fifteen cognitive jobs (019)** — `cognition/jobs/attention.ts` adds
+  `page.extract` (FOREIGN: extraction does not launder a page),
+  `intent.parse` (says `unknown` rather than guessing), `priority.score`
+  (every contribution named) and `thread.summarize` (recency-weighted,
+  because the end of a conversation is the point).
+- **The outbox has a face (019)** — `arish effects`,
+  `GET /api/effects`, `/effects.html`, and two numbers in `arish status`.
+  **No retry anywhere**, by design; reconciling is terminal-only.
+- **Per-peer frame budget (019)** — `mesh/ratelimit.ts`, 40 burst /
+  120 per minute, charged before the seal is opened. The trade-off is
+  written down in the decision record.
+
 ## The next concrete action
 
-Surface `Outbox.needsAttention()` in the CLI and the web UI. The queue
-exists and only a human can drain it; today nothing shows it to them.
-No connector implements a probe yet either, so every real effect would
-reconcile to `needs_attention`.
-
-Then: drive `MeshAgent.expire()` from the orchestration tick. Today a request
+Drive `MeshAgent.expire()` from the orchestration tick. Today a request
 whose answer never arrives stays pending until a caller expires it by
 hand, which the tests do and nothing in the product does.
 

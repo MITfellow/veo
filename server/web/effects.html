@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Effects — ARISH</title>
+<link rel="stylesheet" href="/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='9' fill='%230f6cbd'/></svg>">
+<style>
+  .fx-wrap { max-width: 920px; margin: 0 auto; padding: 32px 24px 80px; }
+  .fx-tally { display: flex; gap: 14px; flex-wrap: wrap; margin: 18px 0 26px; }
+  .fx-tile { flex: 1 1 180px; border: 1px solid var(--line, #e3e3e3); border-radius: 10px; padding: 14px 16px; background: #fff; }
+  .fx-tile b { display: block; font-size: 26px; line-height: 1.2; }
+  .fx-tile.warn { border-color: #d8a200; background: #fffaf0; }
+  .fx-row { display: grid; grid-template-columns: 120px 150px 1fr auto; gap: 12px;
+            padding: 11px 14px; border-bottom: 1px solid var(--line, #eee); align-items: baseline; }
+  .fx-row:last-child { border-bottom: 0; }
+  .fx-state { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .fx-state.needs_attention { color: #9a6700; font-weight: 600; }
+  .fx-state.intended { color: #0f6cbd; }
+  .fx-state.committed { color: #1a7f37; }
+  .fx-state.compensated, .fx-state.absent { color: #666; }
+  .fx-detail { color: #666; font-size: 13px; }
+  .fx-empty { padding: 28px 14px; color: #666; }
+  .fx-card { border: 1px solid var(--line, #e3e3e3); border-radius: 10px; background: #fff; }
+</style>
+</head>
+<body>
+
+<div class="titlebar">
+  <span>Effects</span>
+  <div class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+</div>
+
+<main class="fx-wrap">
+  <p class="eyebrow">Section 13 — exactly-once external effects</p>
+  <h1 id="fx-heading">Loading…</h1>
+  <p class="lede" id="fx-lede"></p>
+
+  <div class="fx-tally" id="fx-tally"></div>
+  <div class="fx-card" id="fx-list"></div>
+
+  <div class="note" style="margin-top:22px">
+    <strong>Nothing here can be retried from this page.</strong>
+    <p style="margin:6px 0 0">
+      Reconciling asks each provider what really happened, and it is a terminal
+      command — <code>arish effects reconcile</code> — on purpose. A button that
+      resent an email because a page was left open would defeat the mechanism it
+      is attached to.
+    </p>
+  </div>
+
+  <p style="margin-top:26px"><a href="/">← Back to setup</a></p>
+</main>
+
+<script src="/effects.js"></script>
+</body>
+</html>

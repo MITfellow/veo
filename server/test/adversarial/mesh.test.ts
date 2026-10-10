@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { decodeFrame, encodeFrame, openFrame, sealFrame } from '../../src/capability/mesh/wire.js';
+import { BUCKET_CAPACITY, FrameBudget, REFILL_PER_MINUTE } from '../../src/capability/mesh/ratelimit.js';
+import { FakeClock } from '../fakes/clock.js';
 import { deriveLinkKeys } from '../../src/capability/mesh/pairing.js';
 import { MAX_FRAME_BYTES, MAX_SKEW_MS, type Body } from '../../src/capability/mesh/types.js';
 import { meshPair } from '../fakes/mesh.js';
@@ -231,5 +233,103 @@ describe('an unpaired device gets nothing, and learns nothing', () => {
     // A reply would confirm the device exists and is listening.
     expect(mesh.wire.traffic.length).toBe(before);
     mesh.close();
+  });
+});
+
+/**
+ * The second half of the threat model: a peer that is who it says it is
+ * and is simply costing this device more than it should.
+ */
+
+describe('the frame budget', () => {
+  it('lets ordinary conversation through untouched', () => {
+    const clock = new FakeClock();
+    const budget = new FrameBudget(() => clock.now());
+    for (let i = 0; i < BUCKET_CAPACITY; i++) {
+      expect(budget.take('laptop'), `frame ${i}`).toBe(true);
+      clock.advance(1000);
+    }
+  });
+
+  it('refuses a flood once the burst is spent', () => {
+    const clock = new FakeClock();
+    const budget = new FrameBudget(() => clock.now());
+    // No time passes: nothing refills.
+    for (let i = 0; i < BUCKET_CAPACITY; i++) expect(budget.take('laptop')).toBe(true);
+    expect(budget.take('laptop')).toBe(false);
+    expect(budget.take('laptop')).toBe(false);
+  });
+
+  it('refills with the clock, not with a timer', () => {
+    const clock = new FakeClock();
+    const budget = new FrameBudget(() => clock.now());
+    for (let i = 0; i < BUCKET_CAPACITY; i++) budget.take('laptop');
+    expect(budget.take('laptop')).toBe(false);
+
+    clock.advance(60_000);
+    // A minute buys REFILL_PER_MINUTE frames, capped at the bucket size.
+    expect(budget.remaining('laptop')).toBe(Math.min(BUCKET_CAPACITY, REFILL_PER_MINUTE));
+    expect(budget.take('laptop')).toBe(true);
+  });
+
+  it('never accumulates more than one burst, however long it idles', () => {
+    const clock = new FakeClock();
+    const budget = new FrameBudget(() => clock.now());
+    budget.take('laptop');
+    clock.advance(86_400_000); // a day
+    expect(budget.remaining('laptop')).toBe(BUCKET_CAPACITY);
+  });
+
+  it('meters each peer separately', () => {
+    const clock = new FakeClock();
+    const budget = new FrameBudget(() => clock.now());
+    for (let i = 0; i < BUCKET_CAPACITY; i++) budget.take('laptop');
+    expect(budget.take('laptop')).toBe(false);
+    expect(budget.take('phone')).toBe(true);
+  });
+
+  it('forgets a peer that has been unpaired', () => {
+    const clock = new FakeClock();
+    const budget = new FrameBudget(() => clock.now());
+    for (let i = 0; i < BUCKET_CAPACITY; i++) budget.take('laptop');
+    expect(budget.take('laptop')).toBe(false);
+    budget.forget('laptop');
+    expect(budget.take('laptop')).toBe(true);
+  });
+});
+
+describe('a peer that floods the link', () => {
+  it('is dropped rather than answered, and the refusal is recorded', async () => {
+    const pair = await meshPair();
+    try {
+      // Spend the budget with frames the receiving side will refuse to
+      // decode anyway: the cost being defended is the attempt itself.
+      const flood = JSON.stringify({ v: 1, from: pair.a.id, to: pair.b.id, seq: 1, sealed: 'bm90aGluZw==' });
+      for (let i = 0; i < BUCKET_CAPACITY + 5; i++) await pair.b.agent.receive(flood);
+
+      const denials = pair.b.harness.substrate.storage
+        .prepare("SELECT payload FROM events WHERE type = 'policy.denied'")
+        .all<{ payload: string }>()
+        .filter((row) => row.payload.includes('mesh.rate'));
+
+      expect(denials.length).toBeGreaterThan(0);
+      expect(denials.length).toBeLessThanOrEqual(5);
+    } finally {
+      pair.close();
+    }
+  });
+
+  it('does not starve the other device while one is throttled', async () => {
+    const pair = await meshPair();
+    try {
+      const flood = JSON.stringify({ v: 1, from: 'stranger', to: pair.b.id, seq: 1, sealed: 'bm90aGluZw==' });
+      for (let i = 0; i < BUCKET_CAPACITY + 5; i++) await pair.b.agent.receive(flood);
+
+      // The real peer's budget is untouched, so a genuine question still works.
+      const answer = await pair.a.agent.ask(pair.b.id, 'presence', {});
+      expect(answer.ok).toBe(true);
+    } finally {
+      pair.close();
+    }
   });
 });

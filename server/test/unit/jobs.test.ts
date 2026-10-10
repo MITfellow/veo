@@ -8,8 +8,8 @@ const noModel = ConfigSchema.parse({});
 const withModel = ConfigSchema.parse({ model: { provider: 'openai', name: 'some-model' } });
 
 describe('§33 the registry is complete and closed', () => {
-  it('implements exactly the eleven declared jobs', () => {
-    expect(allJobs()).toHaveLength(11);
+  it('implements exactly the fifteen declared jobs', () => {
+    expect(allJobs()).toHaveLength(15);
     expect(allJobs().map((j) => j.name).sort()).toEqual([...JOB_NAMES].sort());
   });
 
@@ -28,9 +28,11 @@ describe('§33 the registry is complete and closed', () => {
     }
   });
 
-  it('quarantine.extract is the only job whose output stays FOREIGN', () => {
-    const foreign = allJobs().filter((j) => j.outputTrust === 'FOREIGN').map((j) => j.name);
-    expect(foreign).toEqual(['quarantine.extract']);
+  it('only the two jobs that read a stranger\'s words stay FOREIGN', () => {
+    // Extraction does not launder a web page: shortening something a
+    // stranger wrote leaves it something a stranger wrote.
+    const foreign = allJobs().filter((j) => j.outputTrust === 'FOREIGN').map((j) => j.name).sort();
+    expect(foreign).toEqual(['page.extract', 'quarantine.extract']);
   });
 
   it('an unknown job is an error, not undefined', () => {
@@ -121,6 +123,10 @@ describe('§33 both strategies are held to the same contract', () => {
       'draft.compose': { kind: 'note', intent: 'say hello' },
       'content.classify': { text: 'hello?' },
       'quarantine.extract': { content: 'hello' },
+      'page.extract': { html: '<title>T</title><p>Body text here.</p>' },
+      'intent.parse': { text: 'send Ana the notes' },
+      'priority.score': { subject: 'Invoice', body: 'due soon' },
+      'thread.summarize': { messages: [{ speaker: 'Ara', text: 'Shall we meet?' }] },
     };
     for (const job of allJobs()) {
       const input = job.input.parse(samples[job.name]) as never;
@@ -271,9 +277,9 @@ describe('§33 baselines actually work', () => {
 });
 
 describe('describeJobs is what doctor and the UI report', () => {
-  it('reports all eleven with their serving strategy', () => {
+  it('reports all fifteen with their serving strategy', () => {
     const described = describeJobs(noModel);
-    expect(described).toHaveLength(11);
+    expect(described).toHaveLength(15);
     expect(described.every((j) => j.strategy === 'baseline')).toBe(true);
     expect(described.every((j) => j.reason.includes('L1'))).toBe(true);
   });

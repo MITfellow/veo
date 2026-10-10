@@ -2,6 +2,7 @@ import type { Config } from '../substrate/config.js';
 import { JOB_NAMES, JobError, type AnyJob, type JobContext, type JobName, type ModelRequest, type StrategyKind } from './types.js';
 import { languageJobs } from './jobs/language.js';
 import { knowledgeJobs } from './jobs/knowledge.js';
+import { attentionJobs } from './jobs/attention.js';
 
 /**
  * The job registry and the one decision point (§33, §59.17).
@@ -13,7 +14,7 @@ import { knowledgeJobs } from './jobs/knowledge.js';
  * thing to change, and it is already written.
  */
 
-const ALL: readonly AnyJob[] = [...languageJobs, ...knowledgeJobs] as readonly AnyJob[];
+const ALL: readonly AnyJob[] = [...languageJobs, ...knowledgeJobs, ...attentionJobs] as readonly AnyJob[];
 
 const BY_NAME: ReadonlyMap<JobName, AnyJob> = new Map(ALL.map((job) => [job.name, job]));
 

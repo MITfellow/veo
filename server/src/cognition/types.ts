@@ -18,7 +18,11 @@ import type { TrustLevel } from '../substrate/events/types.js';
  * differently, whether to use it.
  */
 
-/** The eleven. This list is closed; a twelfth needs a decision record. */
+/**
+ * The fifteen (§16.1). This list is closed; a sixteenth needs a decision
+ * record. It grew from eleven when the specification was replaced — the
+ * three attention jobs at the end are that growth.
+ */
 export const JOB_NAMES = [
   'turn.generate',
   'memory.extract',
@@ -31,6 +35,10 @@ export const JOB_NAMES = [
   'draft.compose',
   'content.classify',
   'quarantine.extract',
+  'page.extract',
+  'intent.parse',
+  'priority.score',
+  'thread.summarize',
 ] as const;
 
 export type JobName = (typeof JOB_NAMES)[number];
@@ -130,7 +138,7 @@ export interface CognitiveJob<I, O> {
 }
 
 /**
- * Erased form, so one registry can hold all eleven.
+ * Erased form, so one registry can hold all fifteen.
  *
  * `never` in the parameter positions rather than `any`: a function taking a
  * specific input is assignable to one taking `never`, so every concrete job

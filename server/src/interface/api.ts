@@ -238,3 +238,29 @@ export function platformStatus(storage: Storage, config: Config, eventCount: num
 }
 
 export { badRequest, notFound, ok };
+
+/**
+ * §13 — the outbox, as the UI sees it.
+ *
+ * Read-only, deliberately. Reconciling is a decision with consequences in
+ * the outside world and belongs behind `arish effects reconcile`, where a
+ * person has typed something rather than clicked something on a page that
+ * might have been left open.
+ */
+export function effectsStatus(storage: Storage): ApiResponse {
+  const rows = storage
+    .prepare(`SELECT key, tool, status, summary, detail, remote_ref AS remoteRef, intended_at AS intendedAt
+                FROM outbox ORDER BY intended_at DESC LIMIT 100`)
+    .all<Record<string, unknown>>();
+  const count = (status: string): number =>
+    storage.prepare('SELECT COUNT(*) AS n FROM outbox WHERE status = ?').get<{ n: number }>(status)?.n ?? 0;
+
+  return ok({
+    pending: count('intended'),
+    needsAttention: count('needs_attention'),
+    committed: count('committed'),
+    effects: rows,
+    explain:
+      'An effect is recorded before it is attempted and again after it succeeds. Anything still unsettled is something we cannot prove either way — and nothing is ever retried on a guess.',
+  });
+}

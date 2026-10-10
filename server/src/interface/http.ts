@@ -9,7 +9,7 @@ import {
   ensureConnectorTable,
   listConnectors,
   modelStatus,
-  platformStatus,
+  effectsStatus, platformStatus,
   setConnector,
   type ApiResponse,
 } from './api.js';
@@ -95,6 +95,7 @@ const ROUTES: Record<string, (body: unknown, deps: HttpDeps) => ApiResponse> = {
   'GET /api/status': (_b, d) => platformStatus(d.storage, d.config, d.eventCount()),
   'GET /api/connectors': (_b, d) => listConnectors(d.storage),
   'GET /api/model': (_b, d) => modelStatus(d.config),
+  'GET /api/effects': (_b, d) => effectsStatus(d.storage),
   'POST /api/model/check': (body) => checkModel(body),
   'GET /api/browser/catalogue': () => browserCatalogue(),
   'GET /api/browser': (_b, d) => sessionState(browserOf(d)),

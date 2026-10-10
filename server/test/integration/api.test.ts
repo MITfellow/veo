@@ -25,11 +25,11 @@ const get = (path: string, d: HttpDeps) => handleApi('GET', path, undefined, d);
 const post = (path: string, body: unknown, d: HttpDeps) => handleApi('POST', path, body, d);
 
 describe('the platform endpoint tells the truth about the build', () => {
-  it('reports L1 and eleven jobs with no model', async () => {
+  it('reports L1 and all fifteen jobs with no model', async () => {
     const { d, close } = deps();
     const res = await get('/api/status', d);
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ name: 'ARISH', degradation: 'L1', jobs: 11, autonomy: 0 });
+    expect(res.body).toMatchObject({ name: 'ARISH', degradation: 'L1', jobs: 15, autonomy: 0 });
     close();
   });
 
@@ -38,7 +38,7 @@ describe('the platform endpoint tells the truth about the build', () => {
     const body = (await get('/api/model', d)).body as { attached: boolean; statement: string; jobs: unknown[] };
     expect(body.attached).toBe(false);
     expect(body.statement).toContain('No model configured');
-    expect(body.jobs).toHaveLength(11);
+    expect(body.jobs).toHaveLength(15);
     close();
   });
 

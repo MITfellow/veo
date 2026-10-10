@@ -1,10 +1,12 @@
 import { parseArgs } from 'node:util';
+import { HELP } from './help.js';
 import { createSubstrate } from '../substrate/index.js';
 import { configFromEnv, ConfigError, type Config } from '../substrate/config.js';
 import { CURRENT_SCHEMA_VERSION } from '../substrate/storage/migrations.js';
 import { registeredTypes } from '../substrate/events/registry.js';
 import { diffSnapshots, snapshotDigest } from '../substrate/projections/index.js';
 import { describeJobs } from '../cognition/registry.js';
+import { JOB_NAMES } from '../cognition/types.js';
 import { allConnectors } from '../capability/connectors.js';
 
 /** How the eleven cognitive jobs are currently being served (§33). */
@@ -79,7 +81,7 @@ function doctor(io: CliIo, config: Config, json: boolean): number {
     { name: 'clock', ok: clockLooksSane(), detail: new Date().toISOString() },
     { name: 'schema', ok: true, detail: `migrations through v${CURRENT_SCHEMA_VERSION}` },
     { name: 'eventTypes', ok: true, detail: `${registeredTypes().length} types appendable` },
-    { name: 'jobs', ok: describeJobs(config).length === 11, detail: jobsDetail(config) },
+    { name: 'jobs', ok: describeJobs(config).length === JOB_NAMES.length, detail: jobsDetail(config) },
     { name: 'connectors', ok: true, detail: `${allConnectors().filter((c) => c.status === 'available').length} ready, ${allConnectors().filter((c) => c.status === 'blocked').length} blocked on network/OAuth` },
     // §2 and §6. This is a check, not a comment, because the whole build
     // depends on it staying true and a check fails loudly.
@@ -127,6 +129,9 @@ function status(io: CliIo, config: Config, json: boolean): number {
       liveFacts: count("facts WHERE retracted_at IS NULL AND status = 'active'"),
       entities: count('entities'),
       items: count('items'),
+      // §13: two numbers a person must never have to go looking for.
+      effectsPending: count("outbox WHERE status = 'intended'"),
+      effectsNeedingAttention: count("outbox WHERE status = 'needs_attention'"),
       headSeq: head.seq,
       headHash: head.hash,
       schemaVersion: substrate.storage.userVersion(),
@@ -142,6 +147,8 @@ function status(io: CliIo, config: Config, json: boolean): number {
       `schema       v${payload.schemaVersion}`,
       `degradation  L1 — no model provider configured`,
       `autonomy     L${payload.autonomy}`,
+      `effects      ${payload.effectsPending} unsettled, ${payload.effectsNeedingAttention} need you`
+        + (payload.effectsNeedingAttention > 0 ? " — run 'arish effects attention'" : ''),
     ]);
     return 0;
   } finally {
@@ -238,6 +245,26 @@ function resolveConfig(argv: readonly string[], io: CliIo): Config | number {
   }
 }
 
+/**
+ * `arish effects …` — the outbox (§13).
+ *
+ * Its reason to exist is the `needs attention` list: effects nobody can
+ * prove happened or did not. That queue can only be drained by a person,
+ * and a queue a person cannot see is the same as no queue at all.
+ */
+async function effects(argv: readonly string[], io: CliIo): Promise<number> {
+  const { runEffects } = await import('./effects-cli.js');
+  const config = resolveConfig(argv, io);
+  if (typeof config === 'number') return config;
+
+  const substrate = createSubstrate({ dbPath: dbPathFor(config), timeZone: config.timeZone });
+  try {
+    return runEffects(argv.slice(1), { substrate }, { out: io.out, err: io.err }, argv.includes('--json'));
+  } finally {
+    substrate.close();
+  }
+}
+
 /** `arish memory …` — M2's surface. */
 async function memory(argv: readonly string[], io: CliIo): Promise<number> {
   const { runMemory } = await import('./memory-cli.js');
@@ -256,43 +283,6 @@ async function memory(argv: readonly string[], io: CliIo): Promise<number> {
   }
 }
 
-const HELP = `arish — the personal agent platform
-
-Usage: arish <command> [options]
-
-Commands (M0):
-  doctor         environment, config, disk and clock sanity
-  status         event count, chain head, schema version, degradation rung
-  verify-chain   hash-chain integrity over the whole log
-  rebuild        drop every projection and replay the log
-
-Commands (M1):
-  vault <cmd>    init, status, set, get, list, forget, panic
-                 run 'arish vault help' for detail
-
-Commands (M2):
-  memory <cmd>   add, list, recall, history, forget, entities,
-                 conflicts, consolidate
-                 run 'arish memory help' for detail
-
-Commands (M3):
-  tools          every tool, with the rung and capabilities it needs
-  run <plan>     execute a sealed plan through the gate chain
-                 --dry-run, --autonomy N, --trust T
-  approvals      what the agent is waiting to be told
-                 approvals grant|deny <id>
-
-Commands (onboarding, decision 008):
-  serve          the Get Started UI and local JSON API
-                 --host, --port (defaults 127.0.0.1:8787)
-
-Options:
-  --json         machine-readable output on stdout
-  --data-dir     override the data directory
-
-Later milestones add: init, start, replay, backup, restore,
-export, import. They are absent rather than stubbed (§61).
-`;
 
 /** Each command is a plain function of (io, config, json) → exit code. */
 const HANDLERS: Record<Exclude<Command, 'help'>, (io: CliIo, config: Config, json: boolean) => number> = {
@@ -350,6 +340,7 @@ export function run(argv: readonly string[], io: CliIo = defaultIo): number {
  */
 const SUBSYSTEMS: Record<string, (argv: readonly string[], io: CliIo) => Promise<number>> = {
   serve: async (argv, io) => (await import('./serve.js')).serve(argv, io),
+  effects: effects,
   memory: (argv, io) => memory(argv.slice(1), io),
   tools: orchestration,
   run: orchestration,

@@ -1,6 +1,7 @@
 import type { EventLog } from '../../substrate/events/log.js';
 import type { Logger } from '../../substrate/ports.js';
 import type { PeerDirectory } from './directory.js';
+import { FrameBudget } from './ratelimit.js';
 import { decodeFrame, encodeFrame, openFrame, sealFrame } from './wire.js';
 import type { PeerLink } from './transport.js';
 import {
@@ -50,9 +51,11 @@ interface Pending {
 
 export class MeshAgent {
   private readonly pending = new Map<string, Pending>();
+  private readonly budget: FrameBudget;
   private readonly byTopic = new Map<string, TopicHandler>();
 
   constructor(private readonly deps: MeshAgentDeps) {
+    this.budget = new FrameBudget(deps.now);
     for (const handler of deps.handlers) this.byTopic.set(handler.topic, handler);
     deps.link.onFrame((raw) => this.receive(raw));
   }
@@ -120,6 +123,17 @@ export class MeshAgent {
       frame = decodeFrame(raw);
     } catch (error) {
       return this.denied('mesh.frame', error);
+    }
+
+    // Charged before the seal is opened: an unmetered AEAD open is the
+    // expensive path, and metering only what authenticates would leave
+    // the flood free. See `ratelimit.ts` for what this costs.
+    if (!this.budget.take(frame.from)) {
+      this.deps.events.append({
+        type: 'policy.denied', actor: `peer:${frame.from}`, trust: 'FOREIGN',
+        payload: { rule: 'mesh.rate', detail: `${frame.from} exceeded its frame budget`, capabilities: [] },
+      });
+      return;
     }
 
     let peer: PeerRecord;
