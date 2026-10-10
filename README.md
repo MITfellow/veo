@@ -3,7 +3,7 @@
 A complete, installable messaging app for the web — and the home of a personal agent
 that actually runs.
 
-Two halves of one product:
+Three parts of one product:
 
 - **Veo**, the client. React + TypeScript + Vite, styled after macOS Messages (Tahoe).
   No account, no backend: conversations, photos and files live in IndexedDB on your
@@ -13,6 +13,10 @@ Two halves of one product:
   content is allowed to cause, an approval gate in front of anything irreversible,
   and a context assembler that fits two hundred turns into a budget. It is spoken to
   through the conversation named **Agent**, like anyone else in the app.
+- **[`server/`](server/)** — the **ARISH platform**: the same idea rebuilt from the
+  substrate up, as a standalone, model-free personal agent kernel. Its own CLI, its
+  own HTTP surface, its own 812-test suite. See
+  [The platform](#the-platform-server) below.
 
 ```bash
 npm install
@@ -21,11 +25,11 @@ npm run dev:web    # just the client
 npm run agent      # just the agent
 npm run build      # production bundle in dist/
 npm run preview    # serve the built bundle (service worker active)
-npm test           # 140 client tests
-npm run test:agent # 579 agent tests
+npm test           # 167 client tests
+npm run test:agent # 1035 agent tests
 npm run typecheck  # tsc --build, both halves
 npm run lint       # oxlint
-npm run e2e        # 91 Playwright tests, including the live agent
+npm run e2e        # 176 Playwright specs, including the live agent
 ```
 
 ### Giving the agent a model
@@ -43,6 +47,137 @@ npm run dev
 
 The browser never holds that key or the agent's bearer token: the dev server proxies
 `/agent/*` and attaches the token on the way through.
+
+
+---
+
+## The platform (`server/`)
+
+A second, deeper implementation of ARISH, built bottom-up against a written
+specification rather than against a UI. It runs on its own:
+
+```bash
+cd server
+bash scripts/serve.sh          # installs, compiles and serves on :8787
+```
+
+or by hand:
+
+```bash
+npm install && npx tsc -p tsconfig.json
+node dist/src/interface/cli.js serve --host 0.0.0.0 --port 8787 --data-dir ~/arish-data
+```
+
+```
+arish doctor | status | verify-chain | rebuild
+arish vault <init|status|set|get|list|forget|panic>
+arish memory <add|list|recall|history|forget|entities|conflicts|consolidate>
+arish tools | run <plan> | approvals <grant|deny>
+arish effects <list|pending|attention|reconcile>
+arish serve
+```
+
+**812 tests across 58 files**, offline and deterministic, with `tsc`, ESLint
+(`complexity: 10`, `max-lines: 400`, no `any`, no non-null assertions) and zero
+`eslint-disable` anywhere in `src/`.
+
+### The premise: no model, on purpose
+
+There is no provider SDK, no API key and no inference call. Every function that
+would ordinarily be "call the LLM" is a **cognitive job** with two strategies: a
+deterministic baseline that ships and works, and a model strategy that is fully
+written, contract-tested and inert. Exactly one function in the codebase asks
+whether a model is attached. Attaching one is configuration, not surgery —
+and that claim is held up by a test rather than a promise.
+
+Fifteen jobs: `turn.generate`, `memory.extract`, `entity.resolve`,
+`text.summarize`, `thread.summarize`, `history.compact`, `memory.consolidate`,
+`rule.induce`, `brief.compose`, `draft.compose`, `content.classify`,
+`quarantine.extract`, `page.extract`, `intent.parse`, `priority.score`.
+
+### What it is made of
+
+| Layer | What is there |
+| --- | --- |
+| **Substrate** | An append-only, hash-chained event log in SQLite that *is* the state. Projections are derived and disposable — a test drops all eleven, replays ten thousand events and asserts the result is **byte-identical**. Bitemporal memory: every fact knows when it was true and when we learned it, so "what did I believe last Tuesday" is a query, not an archaeology project. |
+| **Security** | Argon2id-derived keys, per-item encryption so **forgetting is cryptographic** (delete the key and the bytes are unreadable with the database, the passphrase and an unlocked vault), a vault with idle locking, a trust lattice, a quarantine channel, a capability firewall, and an egress guard that refuses cleartext, metadata hosts, private addresses and credentials-in-URL before a socket is opened. |
+| **Capability** | Tools, connectors, a semantic broker that routes an objective to a connector without executing anything, OAuth with PKCE (tokens in the vault, rows hold references), a headless browser driver with its own HTML parser, and the mesh. |
+| **Cognition** | The fifteen jobs, the deterministic text utilities they are built from, the context assembler, and procedural rule decay. |
+| **Orchestration** | Plan → budget → Rule of Two → capabilities and trust floor → autonomy → invoke. Approvals are one-shot and expire. The degradation ladder and the completion gates live here. |
+| **Interface** | A CLI, a JSON API over `node:http`, and a web UI: Get Started onboarding, a browser console, and the effects queue. |
+
+### Things worth singling out
+
+**The Rule of Two.** Private data, untrusted content, and the ability to change
+the outside world: any two are fine, all three need you. Proven exhaustively
+across every combination, not spot-checked.
+
+**Untrusted content cannot act.** Anything from outside enters quarantine and
+reaches the rest of the system as a *reference with no bytes in it*. Real
+injection attacks are in the adversarial suite and fail with no prompt defences
+at all, because there is no path for them to take.
+
+**Exactly-once external effects.** An effect is two events, never one:
+`effect.intended` before the world is touched, `effect.committed` after. A crash
+between them leaves a queryable intention instead of a silence. Reconciliation
+asks the provider where it can and a human where it cannot — **absence of a
+probe is never treated as absence of the effect**, and nothing is ever blindly
+retried. There is no `retry` verb and no retry button; a confirmed-absent effect
+is the only state a retry is permitted from. `arish effects attention` and
+`/effects.html` are the human end of it.
+
+**An agent-to-agent mesh.** One protocol over two transports, in-device and
+across a LAN. Peers are paired by a human-carried code with matching
+confirmation words, every frame is sealed with directional keys, and a peer is
+**always FOREIGN**: it can ask about presence, availability, recall and sharing,
+and *none* of those can cause an effect. A per-peer token bucket caps the frame
+rate, charged before the seal is opened so flooding is cheap to refuse.
+
+**The context assembler.** One pure function, fourteen blocks, emitted
+least-changing to most-changing so the prefix is byte-stable and a provider's
+prompt cache can key on it. The task sits last, nearest the model's output;
+untrusted material is fenced above it as references. Under budget pressure it
+drops whole blocks in a specified order — never fragments, because half a facts
+list reads like a complete one — and reports what went. Sixteen golden
+scenarios pin the behaviour.
+
+**A degradation ladder, L0–L6.** Capability is a rung, not a boolean, computed
+from observable signals and evaluated worst-first so the rung reported is always
+the binding constraint. Every rung names what was lost *and* what remains, in
+the state of the machine rather than as a refusal: "the vault is locked" is
+actionable, "permission denied" is not. With no model the honest answer is
+**L1 — baselines**, which is the intended state of this build.
+
+**Rules that let go.** An induced habit demotes itself: three corrections put it
+on probation, five retire it. A probationary rule is kept and not used — deleting
+it would lose the history explaining why the agent stopped trusting it.
+Retirement is one-way, because resurrecting a retired rule on a lucky streak is
+how an agent re-learns something it was explicitly corrected on.
+
+**Completion gates that default to FAIL.** Nothing is done because the agent says
+so. Eight gates judge *external* evidence — events appended, effects committed,
+artifacts that exist — and never the plan's own opinion of itself. A gate whose
+check throws has **failed, not been skipped**, because the alternative turns every
+bug in the checking code into a false claim of success. Sixteen named failure
+modes; "it didn't work" is not a result.
+
+### How it is built
+
+Every decision with a cost is written down in [`server/docs/decisions/`](server/docs/decisions/)
+— twenty records so far, including the ones that went badly. Progress lives in
+[`server/docs/progress/CURRENT.md`](server/docs/progress/CURRENT.md).
+
+The governing specification is **truncated at §20**: Parts IV–VIII and all
+appendices were never received. `page.extract`/`intent.parse`/`priority.score`
+and the four subsystems above were built past that truncation, and
+[decision 020](server/docs/decisions/020-building-past-the-truncation.md) lists
+exactly which details came from the document and which are the author's own, so
+the real text can overrule them later rather than quietly disagreeing.
+
+Known open items, stated rather than hidden: the context assembler, the gates and
+rule decay are **correct, tested and not yet consumed by the run loop**; no
+connector implements a reconciliation probe, so every real effect today lands in
+`needs_attention`; the spec asks for Node 22+ and `engines` still says `>=20`.
 
 ---
 
@@ -513,7 +648,7 @@ Everything needed to actually ship this, not just demo it.
 | **Notifications** | Opt-in desktop notifications that only fire when the tab is hidden and the chat isn't muted |
 | **Accessibility** | Landmarks + skip link, the conversation list is a `listbox` with keyboard activation (pinned tiles and search hits live in their own labelled groups, so the listbox only ever contains options), the thread is an `aria-live` log, labelled icon buttons and tapbacks, `role="switch"` toggles, a visible focus ring everywhere, full `prefers-reduced-motion` support — and an **automated axe-core audit runs in CI** and fails on any serious or critical violation |
 | **Performance** | Messages indexed by chat in a `Map`, memoised bubbles, and long threads mount only the last 120 messages behind a "Load earlier" control; React is split into its own chunk |
-| **Tests & CI** | **126 vitest tests** — reducer, time rules, reply engine, persistence, an axe-core a11y audit, plus Testing Library integration specs that boot the whole app (send, keyboard navigation, settings, persistence, offline banner) — and **90 Playwright end-to-end specs** (`npm run e2e`) that run against the real production build on desktop **and** an emulated iPhone: boot, send + auto-reply + receipts, cross-thread search and jump, tapbacks, theme persistence across a reload, service-worker registration and a **cold offline reload**, single-pane mobile navigation, plus a **UI-regression suite** that asserts bubble tails paint behind the text, that no label is clipped by its own box, that popovers stay inside the window, that reply quotes hug their text, and that dark-mode elevated surfaces differ from the sidebar — plus a **first-run suite** covering the empty install, the contact directory, starting the very first conversation, and Reset Data. Specs that need history seed it through `e2e/fixture.ts`, so the shipped app stays empty. GitHub Actions runs typecheck → lint → test → build, then the E2E suite as its own job with the HTML report uploaded as an artifact |
+| **Tests & CI** | **167 vitest tests** — reducer, time rules, reply engine, persistence, an axe-core a11y audit, plus Testing Library integration specs that boot the whole app (send, keyboard navigation, settings, persistence, offline banner) — and **176 Playwright end-to-end specs** (`npm run e2e`) that run against the real production build on desktop **and** an emulated iPhone: boot, send + auto-reply + receipts, cross-thread search and jump, tapbacks, theme persistence across a reload, service-worker registration and a **cold offline reload**, single-pane mobile navigation, plus a **UI-regression suite** that asserts bubble tails paint behind the text, that no label is clipped by its own box, that popovers stay inside the window, that reply quotes hug their text, and that dark-mode elevated surfaces differ from the sidebar — plus a **first-run suite** covering the empty install, the contact directory, starting the very first conversation, and Reset Data. Specs that need history seed it through `e2e/fixture.ts`, so the shipped app stays empty. GitHub Actions runs typecheck → lint → test → build, then the E2E suite as its own job with the HTML report uploaded as an artifact |
 | **Deploy** | Multi-stage `Dockerfile` (node build → nginx) with `nginx.conf` (SPA fallback, immutable asset caching, no-cache `sw.js`, security headers), plus `vercel.json` and `netlify.toml` with the same rules |
 
 ```bash
