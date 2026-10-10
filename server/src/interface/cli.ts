@@ -1,11 +1,14 @@
+import { dbPathFor } from '../substrate/files.js';
 import { parseArgs } from 'node:util';
 import { HELP } from './help.js';
+import { vaultDoor } from './vault-door.js';
 import { createSubstrate } from '../substrate/index.js';
 import { configFromEnv, ConfigError, type Config } from '../substrate/config.js';
 import { CURRENT_SCHEMA_VERSION } from '../substrate/storage/migrations.js';
 import { registeredTypes } from '../substrate/events/registry.js';
 import { diffSnapshots, snapshotDigest } from '../substrate/projections/index.js';
-import { describeJobs } from '../cognition/registry.js';
+import { describeJobs, modelAttached } from '../cognition/registry.js';
+import { assess } from '../orchestration/degradation.js';
 import { JOB_NAMES } from '../cognition/types.js';
 import { allConnectors } from '../capability/connectors.js';
 
@@ -62,10 +65,6 @@ const defaultIo: CliIo = {
   env: process.env,
 };
 
-function dbPathFor(config: Config): string {
-  return `${config.dataDir}/arish.db`;
-}
-
 function emit(io: CliIo, json: boolean, payload: Record<string, unknown>, text: string[]): void {
   if (json) io.out(JSON.stringify(payload, null, 2));
   else for (const line of text) io.out(line);
@@ -112,10 +111,28 @@ function clockLooksSane(): boolean {
   return now > Date.parse('2024-01-01T00:00:00Z') && now < Date.parse('2100-01-01T00:00:00Z');
 }
 
+/**
+ * §20, for this installation.
+ *
+ * Only three signals are observable from here without doing work a
+ * status command should not do: probing the network or unlocking the
+ * vault to see whether it unlocks would both be side effects.
+ */
+function rungFor(config: Config, chainIntact: boolean): ReturnType<typeof assess> {
+  return assess({
+    modelAttached: modelAttached(config),
+    modelReachable: modelAttached(config),
+    chainIntact,
+  });
+}
+
 function status(io: CliIo, config: Config, json: boolean): number {
   const substrate = createSubstrate({ dbPath: dbPathFor(config) });
   try {
     const head = substrate.events.head();
+    // §20: computed from what is actually true of this installation,
+    // never asserted. One function, consulted by the CLI and the API.
+    const rung = rungFor(config, substrate.events.verifyChain().ok);
     const count = (table: string): number =>
       substrate.storage.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get<{ n: number }>()?.n ?? 0;
     const payload = {
@@ -135,8 +152,9 @@ function status(io: CliIo, config: Config, json: boolean): number {
       headSeq: head.seq,
       headHash: head.hash,
       schemaVersion: substrate.storage.userVersion(),
-      degradation: 'L1',
-      degradationReason: 'no model provider configured',
+      degradation: rung.rung,
+      degradationReason: rung.reason,
+      degradationLost: rung.lost,
       autonomy: config.autonomy,
     };
     emit(io, json, payload, [
@@ -145,7 +163,7 @@ function status(io: CliIo, config: Config, json: boolean): number {
       `memory       ${payload.liveFacts} live of ${payload.facts} facts, ${payload.entities} entities, ${payload.items} items`,
       `head hash    ${payload.headHash.slice(0, 16)}…`,
       `schema       v${payload.schemaVersion}`,
-      `degradation  L1 — no model provider configured`,
+      `degradation  ${payload.degradation} — ${payload.degradationReason}`,
       `autonomy     L${payload.autonomy}`,
       `effects      ${payload.effectsPending} unsettled, ${payload.effectsNeedingAttention} need you`
         + (payload.effectsNeedingAttention > 0 ? " — run 'arish effects attention'" : ''),
@@ -352,34 +370,7 @@ export async function runAsync(argv: readonly string[], io: CliIo = defaultIo): 
   if (subsystem !== undefined) return subsystem(argv, io);
   if (argv[0] !== 'vault') return run(argv, io);
 
-  const { runVault, ttyPrompt, closePrompt } = await import('./vault-cli.js');
-  const json = argv.includes('--json');
-  const dataDirIndex = argv.indexOf('--data-dir');
-  const override = dataDirIndex >= 0 ? argv[dataDirIndex + 1] : undefined;
-
-  let config: Config;
-  try {
-    config = configFromEnv(io.env, override === undefined ? {} : { dataDir: override });
-  } catch (error) {
-    if (error instanceof ConfigError) {
-      io.err(error.message);
-      return 2;
-    }
-    throw error;
-  }
-
-  const substrate = createSubstrate({ dbPath: dbPathFor(config), timeZone: config.timeZone });
-  try {
-    return await runVault(
-      argv.slice(1).filter((a) => a !== '--json' && a !== override && a !== '--data-dir'),
-      { storage: substrate.storage, clock: substrate.clock, config, log: substrate.events },
-      { out: io.out, err: io.err, prompt: ttyPrompt },
-      json,
-    );
-  } finally {
-    closePrompt();
-    substrate.close();
-  }
+  return vaultDoor(argv, io);
 }
 
 // Only self-execute when run as a binary, so importing this file in a test is free.

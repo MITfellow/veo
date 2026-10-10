@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { allConnectors, combinationRisk, getConnector, type Connector } from '../capability/connectors.js';
 import { describeJobs, modelAttached } from '../cognition/registry.js';
+import { assess } from '../orchestration/degradation.js';
 import { JOB_NAMES } from '../cognition/types.js';
 import type { Config } from '../substrate/config.js';
 import type { Storage } from '../substrate/ports.js';
@@ -202,13 +203,17 @@ export function checkModel(rawBody: unknown): ApiResponse {
 
 export function platformStatus(storage: Storage, config: Config, eventCount: number): ApiResponse {
   const on = enabledIds(storage);
+  const rung = assess({ modelAttached: modelAttached(config), modelReachable: modelAttached(config) });
   return ok({
     name: 'ARISH',
     tagline: 'A personal agent that runs on your machine and forgets when you tell it to.',
     schema: CURRENT_SCHEMA_VERSION,
     events: eventCount,
     autonomy: config.autonomy,
-    degradation: modelAttached(config) ? 'L2' : 'L1',
+    degradation: rung.rung,
+    degradationLabel: rung.label,
+    degradationReason: rung.reason,
+    degradationLost: rung.lost,
     dataDir: config.dataDir,
     connectorsEnabled: on.size,
     jobs: JOB_NAMES.length,
@@ -231,7 +236,7 @@ export function platformStatus(storage: Storage, config: Config, eventCount: num
       },
       {
         title: 'No model, on purpose',
-        body: 'Eleven cognitive jobs each have a deterministic baseline that works today and a model strategy that is written, tested and inert. Attaching a model is configuration, not surgery.',
+        body: 'Fifteen cognitive jobs each have a deterministic baseline that works today and a model strategy that is written, tested and inert. Attaching a model is configuration, not surgery.',
       },
     ],
   });

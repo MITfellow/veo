@@ -95,3 +95,14 @@ export class MemoryFileStore implements FileStore {
     return this.readBytes(target);
   }
 }
+
+/**
+ * Where this installation's database lives.
+ *
+ * One definition. It was written out three times across the interface
+ * layer, which is three chances for a command to open a different file
+ * than the one the user is looking at.
+ */
+export function dbPathFor(config: { dataDir: string }): string {
+  return `${config.dataDir}/arish.db`;
+}

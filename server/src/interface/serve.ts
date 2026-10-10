@@ -1,3 +1,4 @@
+import { dbPathFor } from '../substrate/files.js';
 import { createSubstrate } from '../substrate/index.js';
 import { configFromEnv, ConfigError, type Config } from '../substrate/config.js';
 import type { CliIo } from './cli.js';
@@ -9,10 +10,6 @@ import type { CliIo } from './cli.js';
  * added a door to it, and the one file that routes every command is the
  * worst place for the body of any of them.
  */
-
-function dbPathFor(config: Config): string {
-  return `${config.dataDir}/arish.db`;
-}
 
 /** `arish serve` — the Get Started surface and the local JSON API. */
 export async function serve(argv: readonly string[], io: CliIo): Promise<number> {

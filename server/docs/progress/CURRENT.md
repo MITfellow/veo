@@ -1,6 +1,6 @@
 # Where this is
 
-Suite: **55 files / 765 tests / ~36 s**, `tsc` + lint clean, zero
+Suite: **58 files / 812 tests / ~35 s**, `tsc` + lint clean, zero
 `eslint-disable`. Schema **v11**. Last commits: mesh `1934509`, mesh demo
 `f666e79`, exactly-once effects (this one).
 
@@ -52,9 +52,20 @@ Suite: **55 files / 765 tests / ~36 s**, `tsc` + lint clean, zero
   120 per minute, charged before the seal is opened. The trade-off is
   written down in the decision record.
 
+- **§17 Context Assembler, §18 rule decay, §19 gates, §20 ladder
+  (020)** — built past the truncation on invented specifics, every one
+  of which is listed in decision 020 so it can be checked against the
+  real document later. All four are pure, tested and **inert**: nothing
+  in the run loop consumes them yet.
+
 ## The next concrete action
 
-Drive `MeshAgent.expire()` from the orchestration tick. Today a request
+Wire the four new subsystems into the executor: the assembler should
+build the context a run uses, the gates should judge a run that
+finished, and rule decay needs a store behind it. That is one change to
+the run loop, which is the half of §19 the document has not described.
+
+Then: drive `MeshAgent.expire()` from the orchestration tick. Today a request
 whose answer never arrives stays pending until a caller expires it by
 hand, which the tests do and nothing in the product does.
 
